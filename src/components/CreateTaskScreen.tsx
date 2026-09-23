@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { Task, TaskTheme, RatingBreakdown } from '../types';
 import { AIQuestionDto } from '../api/types';
 import { talapApi } from '../api/talapApi';
+import { api } from '../services/api';
 import { useAsyncAction } from '../utils/useAsyncAction';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
@@ -59,6 +60,7 @@ export const CreateTaskScreen: React.FC<CreateTaskScreenProps> = ({
   const [questionsLoading, setQuestionsLoading] = useState(false);
   const [questionsError, setQuestionsError] = useState<string | null>(null);
   const [questionIndex, setQuestionIndex] = useState(0);
+  const [draftTaskId, setDraftTaskId] = useState<string | null>(null);
 
   // Answers stored strictly as Record<string, string> by field name
   const [answers, setAnswers] = useState<Record<string, string>>({
@@ -77,16 +79,18 @@ export const CreateTaskScreen: React.FC<CreateTaskScreenProps> = ({
   const [isTestMode, setIsTestMode] = useState(true);
 
   // Fetch dynamic AI questions from API
-  const loadQuestions = useCallback(async () => {
+  const loadQuestions = useCallback(async (taskId: string) => {
     setQuestionsLoading(true);
     setQuestionsError(null);
     try {
       const res = await talapApi.fetchAIQuestions({
+        taskId,
         problem: problemDescription,
         theme: taskTheme,
       });
       if (res.success && res.data) {
         setQuestions(res.data);
+        setIsTestMode(Boolean(res.isMock));
       } else {
         setQuestionsError(res.error?.message || 'Не удалось загрузить уточняющие вопросы');
       }
@@ -96,10 +100,6 @@ export const CreateTaskScreen: React.FC<CreateTaskScreenProps> = ({
       setQuestionsLoading(false);
     }
   }, [problemDescription, taskTheme]);
-
-  useEffect(() => {
-    loadQuestions();
-  }, [loadQuestions]);
 
   // Recalculate unified server rating whenever answers change
   useEffect(() => {
@@ -115,7 +115,6 @@ export const CreateTaskScreen: React.FC<CreateTaskScreenProps> = ({
     }).then((res) => {
       if (isMounted && res.success && res.data) {
         setRating(res.data);
-        setIsTestMode(Boolean(res.isMock));
       }
     });
     return () => {
@@ -134,6 +133,7 @@ export const CreateTaskScreen: React.FC<CreateTaskScreenProps> = ({
         : problemDescription;
 
       return talapApi.createTask({
+        id: draftTaskId || undefined,
         title: title || 'Практическая задача бизнеса',
         theme: taskTheme,
         company: {
@@ -216,14 +216,38 @@ export const CreateTaskScreen: React.FC<CreateTaskScreenProps> = ({
   };
 
   // Step 1 Submit
-  const handleStep1Submit = (e: React.FormEvent) => {
+  const handleStep1Submit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!problemDescription.trim()) {
       showToast('Пожалуйста, опишите проблему своими словами.', 'error');
       return;
     }
-    setCurrentStep(2);
-    setQuestionIndex(0);
+    setQuestionsLoading(true);
+    setQuestionsError(null);
+    try {
+      let taskId = draftTaskId;
+      if (!taskId) {
+        const draft = await api.createTask(
+          problemDescription,
+          companyName || 'Бизнес-партнёр TALAP',
+        );
+        taskId = draft.id;
+        setDraftTaskId(taskId);
+      } else {
+        await api.updateTaskFields(taskId, {
+          author_name: companyName || 'Бизнес-партнёр TALAP',
+          description: problemDescription,
+        });
+      }
+      await loadQuestions(taskId);
+      setCurrentStep(2);
+      setQuestionIndex(0);
+    } catch (err: any) {
+      setQuestionsError(err?.message || 'Не удалось создать черновик и получить вопросы');
+      showToast('Не удалось связаться с backend', 'error');
+    } finally {
+      setQuestionsLoading(false);
+    }
   };
 
   // Answer question in Step 2
@@ -503,7 +527,7 @@ export const CreateTaskScreen: React.FC<CreateTaskScreenProps> = ({
                 </div>
                 <button
                   type="button"
-                  onClick={loadQuestions}
+                  onClick={() => draftTaskId && loadQuestions(draftTaskId)}
                   className="px-4 py-2 bg-[#7047EB] text-white text-xs font-bold rounded-xl hover:bg-[#5E32DF] transition-colors cursor-pointer inline-flex items-center gap-1.5"
                 >
                   <RotateCcw className="w-3.5 h-3.5" />

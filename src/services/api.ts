@@ -167,6 +167,14 @@ export const api = {
     return adaptBackendTask(rawTask);
   },
 
+  async updateTaskFields(id: string, payload: Record<string, unknown>): Promise<Task> {
+    const rawTask = await apiRequest<any>(`/tasks/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    });
+    return adaptBackendTask(rawTask);
+  },
+
   async publishTask(id: string): Promise<Task> {
     const rawTask = await apiRequest<any>(`/tasks/${id}/publish`, {
       method: 'POST',
