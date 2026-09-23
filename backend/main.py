@@ -8,7 +8,11 @@ from fastapi import Body, FastAPI, HTTPException, Query, status
 from fastapi.middleware.cors import CORSMiddleware
 
 from backend.database import connect, fetch_all, fetch_one, initialize_database
-from backend.services.ai_service import AIUnavailableError, generate_questions
+from backend.services.ai_service import (
+    AIResponseError,
+    AIUnavailableError,
+    generate_questions,
+)
 from backend.services.rating import calculate_task_rating
 
 
@@ -204,6 +208,8 @@ def get_questions(task_id: int) -> dict[str, Any]:
     task = task_or_404(task_id)
     try:
         return generate_questions(task)
+    except AIResponseError as error:
+        raise HTTPException(status_code=502, detail=str(error)) from error
     except AIUnavailableError as error:
         raise HTTPException(status_code=503, detail=str(error)) from error
 
