@@ -4,10 +4,15 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+import httpx
+import openai
+
 from backend.services.ai_service import (
     AIResponseError,
     AIUnavailableError,
     generate_questions,
+    get_ai_runtime_info,
+    openai_timeout_seconds,
     validate_questions,
 )
 
@@ -89,6 +94,45 @@ class AIServiceTests(unittest.TestCase):
 
         with self.assertRaisesRegex(AIResponseError, "одного поля"):
             validate_questions(payload)
+
+    def test_timeout_returns_retryable_error_without_exposing_secret(self):
+        fake_client = MagicMock()
+        fake_client.responses.create.side_effect = openai.APITimeoutError(
+            request=httpx.Request("POST", "https://api.openai.com/v1/responses")
+        )
+
+        with patch.dict(
+            os.environ,
+            {"AI_MODE": "openai", "OPENAI_API_KEY": "secret-test-key"},
+            clear=True,
+        ):
+            with patch("openai.OpenAI", return_value=fake_client):
+                with self.assertRaises(AIUnavailableError) as raised:
+                    generate_questions(TASK)
+
+        message = str(raised.exception)
+        self.assertIn("Черновик сохранён", message)
+        self.assertIn("повторите запрос", message)
+        self.assertNotIn("secret-test-key", message)
+
+    def test_runtime_info_never_contains_api_key(self):
+        with patch.dict(
+            os.environ,
+            {
+                "AI_MODE": "openai",
+                "OPENAI_API_KEY": "secret-test-key",
+                "OPENAI_MODEL": "gpt-5-mini",
+            },
+            clear=True,
+        ):
+            info = get_ai_runtime_info()
+
+        self.assertEqual(info, {"mode": "openai", "ready": True, "model": "gpt-5-mini"})
+        self.assertNotIn("secret-test-key", repr(info))
+
+    def test_invalid_timeout_uses_safe_default(self):
+        with patch.dict(os.environ, {"OPENAI_TIMEOUT_SECONDS": "zero"}, clear=True):
+            self.assertEqual(openai_timeout_seconds(), 20.0)
 
 
 if __name__ == "__main__":

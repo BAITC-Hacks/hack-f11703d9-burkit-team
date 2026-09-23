@@ -158,6 +158,9 @@ class QuestionsResponse(BaseModel):
 class HealthResponse(BaseModel):
     status: Literal["ok"]
     database: Literal["ok"]
+    ai_mode: Literal["mock", "openai", "disabled", "invalid"]
+    ai_ready: bool
+    ai_model: str | None
 
 
 class RootResponse(BaseModel):

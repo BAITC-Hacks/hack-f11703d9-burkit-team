@@ -65,7 +65,7 @@ $env:AI_MODE = "mock"
 ```powershell
 $env:AI_MODE = "openai"
 $env:OPENAI_API_KEY = "ваш-ключ"
-$env:OPENAI_MODEL = "gpt-6-luna"
+$env:OPENAI_MODEL = "gpt-5-mini"
 
 uvicorn backend.main:app --reload
 ```
@@ -126,6 +126,9 @@ npx vercel deploy --prod --scope burkit
 Для реального AI задайте в Vercel `AI_MODE=openai`, `OPENAI_API_KEY`
 и доступную вашему аккаунту модель `OPENAI_MODEL`, затем выполните новый деплой.
 Без настройки AI используется явно обозначенный режим `mock`.
+
+Инструкция и повторяемый smoke-тест реального OpenAI:
+[проверка OpenAI в production](docs/OPENAI_PRODUCTION_CHECK.md).
 
 Текущие экраны frontend используют локальные моки. Публикация frontend и API
 сама по себе не подключает формы к базе: интеграция экранов с API — отдельная
