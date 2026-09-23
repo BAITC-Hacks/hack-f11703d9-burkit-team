@@ -2,16 +2,18 @@ import React, { useState, useEffect } from 'react';
 import { Task, RatingBreakdown } from '../types';
 import { calculateTaskRating } from '../utils/ratingCalculator';
 import { RatingPanel } from './RatingPanel';
+import { AccordionItem } from './ui/Accordion';
+import { ContextHelp } from './ui/ContextHelp';
+import { useToast } from './ui/Toast';
+import { motion, AnimatePresence } from 'motion/react';
 import { 
-  CheckCheck, 
-  AlertCircle, 
   ArrowLeft,
-  Building2,
+  Eye,
   Check,
-  Globe,
-  Save,
-  Send,
-  Eye
+  Sparkles,
+  Building2,
+  HelpCircle,
+  FileCheck
 } from 'lucide-react';
 
 interface EditTaskScreenProps {
@@ -27,17 +29,26 @@ export const EditTaskScreen: React.FC<EditTaskScreenProps> = ({
   onPreviewStudent,
   onBackToCatalog,
 }) => {
+  const { showToast } = useToast();
   const [formData, setFormData] = useState<Task>(task);
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const [isPublished, setIsPublished] = useState(task.published);
   const [previewRating, setPreviewRating] = useState<RatingBreakdown>(task.rating);
-  const [feedbackMessage, setFeedbackMessage] = useState<string | null>(null);
+  const [scoreGained, setScoreGained] = useState<number | null>(null);
+
+  // Requirement 4: By default, filled sections are collapsed, only 1 section is open
+  const [activeSection, setActiveSection] = useState<string>('context');
+
+  const toggleSection = (key: string) => {
+    setActiveSection((prev) => (prev === key ? '' : key));
+  };
 
   useEffect(() => {
     setFormData(task);
     setPreviewRating(task.rating);
     setIsPublished(task.published);
     setHasUnsavedChanges(false);
+    setScoreGained(null);
   }, [task.id]);
 
   const handleFieldChange = (field: keyof Task, value: any) => {
@@ -50,7 +61,7 @@ export const EditTaskScreen: React.FC<EditTaskScreenProps> = ({
 
   const handleApplySuggestion = (sugId: string) => {
     const currentRating = calculateTaskRating(formData);
-    const suggestion = currentRating.suggestions.find(s => s.id === sugId);
+    const suggestion = currentRating.suggestions.find((s) => s.id === sugId);
     if (!suggestion) return;
 
     const fieldKey = suggestion.field as keyof Task;
@@ -58,366 +69,364 @@ export const EditTaskScreen: React.FC<EditTaskScreenProps> = ({
     const newVal = currentVal ? `${currentVal}\n\n${suggestion.sampleValue}` : suggestion.sampleValue;
 
     handleFieldChange(fieldKey, newVal);
+    showToast('Рекомендация TALAP добавлена в поле', 'info');
+  };
+
+  const handleOpenMissionField = (field: keyof Task) => {
+    if (field === 'need' || field === 'context') {
+      setActiveSection('context');
+    } else if (field === 'dataProvided' || field === 'targetUsers') {
+      setActiveSection('data');
+    } else if (field === 'expectedResult') {
+      setActiveSection('outcome');
+    } else if (field === 'successCriteria') {
+      setActiveSection('success');
+    } else if (field === 'constraints' || field === 'contact' || field === 'interactionFormat') {
+      setActiveSection('mentorship');
+    }
   };
 
   const handleConfirmChanges = () => {
-    const finalRating = calculateTaskRating(formData);
+    const calculated = calculateTaskRating(formData);
+    const oldScore = task.rating.totalScore;
+    const newScore = calculated.totalScore;
+    const diff = Math.max(0, newScore - oldScore);
+
     const savedTask: Task = {
       ...formData,
-      rating: finalRating,
-      updatedAt: 'Только что'
+      published: isPublished,
+      rating: calculated,
+      updatedAt: 'Только что',
     };
-    onSaveTask(savedTask);
-    setPreviewRating(finalRating);
-    setHasUnsavedChanges(false);
 
-    setFeedbackMessage('Изменения успешно подтверждены! Рейтинг обновлен.');
-    setTimeout(() => setFeedbackMessage(null), 3000);
-  };
-
-  const handleSaveDraft = () => {
-    const finalRating = calculateTaskRating(formData);
-    const savedTask: Task = {
-      ...formData,
-      rating: finalRating,
-      updatedAt: 'Только что'
-    };
     onSaveTask(savedTask);
     setHasUnsavedChanges(false);
+    setPreviewRating(calculated);
 
-    setFeedbackMessage('Черновик успешно сохранён.');
-    setTimeout(() => setFeedbackMessage(null), 3000);
+    if (diff > 0) {
+      setScoreGained(diff);
+      showToast(`Карточка сохранена! Начислено +${diff} баллов к рейтингу`, 'success');
+    } else {
+      showToast('Изменения сохранены', 'success');
+    }
   };
 
-  const handlePublish = () => {
-    const updated = { ...formData, published: true };
-    setFormData(updated);
-    setIsPublished(true);
-    onSaveTask(updated);
-
-    setFeedbackMessage('Задача успешно опубликована в общем каталоге!');
-    setTimeout(() => setFeedbackMessage(null), 3000);
-  };
+  // Section completion helpers & 1-line summaries (Requirement 4)
+  const isContextFilled = Boolean(formData.need?.trim() && formData.context?.trim());
+  const isDataFilled = Boolean(formData.dataProvided?.trim() && formData.targetUsers?.trim());
+  const isOutcomeFilled = Boolean(formData.expectedResult?.trim());
+  const isSuccessFilled = Boolean(formData.successCriteria?.trim());
+  const isMentorshipFilled = Boolean(formData.interactionFormat?.trim() && formData.contact?.trim());
 
   return (
-    <div className="max-w-[1320px] mx-auto space-y-6">
-      {/* 1. Normal In-Flow Header (No sticky overlays!) */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-2 border-b border-[#E5E7EF]">
-        <div className="space-y-1 min-w-0">
-          <div className="flex items-center gap-2 text-xs font-semibold text-[#667085]">
+    <div className="flex-1 flex flex-col p-8 overflow-y-auto space-y-6 max-w-7xl mx-auto w-full">
+      {/* 1. Header Zone: Single H1 and 1-line subtitle (Requirement 2 & 17) */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div className="space-y-1">
+          <div className="flex items-center gap-2">
             <button
               type="button"
               onClick={onBackToCatalog}
-              className="text-[#7047EB] hover:underline flex items-center gap-1 cursor-pointer"
+              className="text-xs font-bold text-[#667085] hover:text-[#7047EB] flex items-center gap-1 cursor-pointer transition-colors"
             >
               <ArrowLeft className="w-3.5 h-3.5" />
-              <span>К списку задач</span>
+              <span>Вернуться в каталог</span>
             </button>
-            <span>/</span>
-            <span>{formData.company.name}</span>
-            <span>/</span>
-            <span className="text-[#7047EB] font-bold">{formData.theme}</span>
+            <span className="text-xs text-[#E2E5EE]">/</span>
+            <span className="text-xs font-semibold text-[#667085] truncate max-w-xs">{formData.company.name}</span>
           </div>
 
-          {/* Full Task Title without cutoffs */}
-          <h2 className="text-xl md:text-2xl font-extrabold text-[#17171C] leading-snug">
-            {formData.title}
-          </h2>
+          <h1 className="text-2xl sm:text-3xl font-black text-[#17171C] tracking-tight">
+            Карточка: {formData.title}
+          </h1>
+          <p className="text-xs sm:text-sm text-[#667085] max-w-xl">
+            Заполняйте прикладные блоки задачи. Рейтинг растёт по мере предоставления данных и критериев.
+          </p>
         </div>
 
-        {/* Status indicator in page flow */}
-        <div className="flex items-center gap-2 shrink-0">
-          {hasUnsavedChanges ? (
-            <div className="px-3 py-1.5 bg-[#F45F68]/10 text-[#F45F68] text-xs font-bold rounded-xl border border-[#F45F68]/20 flex items-center gap-1.5">
-              <AlertCircle className="w-3.5 h-3.5 shrink-0" />
-              <span>Есть неподтверждённые изменения</span>
-            </div>
-          ) : (
-            <div className="px-3 py-1.5 bg-[#36B875]/10 text-[#258B55] text-xs font-bold rounded-xl border border-[#36B875]/20 flex items-center gap-1.5">
-              <Check className="w-3.5 h-3.5" />
-              <span>Все данные подтверждены</span>
-            </div>
-          )}
-
+        {/* Top Action Buttons */}
+        <div className="flex items-center gap-3 shrink-0">
           <button
             type="button"
             onClick={onPreviewStudent}
-            className="h-10 px-3.5 bg-white border border-[#E5E7EF] hover:bg-[#F5F6FA] text-xs font-semibold text-[#17171C] rounded-xl transition-colors flex items-center gap-1.5 cursor-pointer"
+            className="h-10 px-4 bg-white border border-[#E2E5EE] hover:bg-[#F4F5F9] text-[#17171C] text-xs font-bold rounded-xl transition-all flex items-center gap-2 cursor-pointer shadow-2xs"
           >
-            <Eye className="w-3.5 h-3.5 text-[#667085]" />
+            <Eye className="w-4 h-4 text-[#7047EB]" />
             <span>Студенческий вид</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={handleConfirmChanges}
+            disabled={!hasUnsavedChanges}
+            className={`h-10 px-5 text-xs font-bold rounded-xl transition-all flex items-center gap-2 cursor-pointer ${
+              hasUnsavedChanges
+                ? 'bg-[#7047EB] hover:bg-[#5E32DF] text-white shadow-xs'
+                : 'bg-[#F4F5F9] text-[#98A2B3] cursor-not-allowed border border-[#E2E5EE]'
+            }`}
+          >
+            <Check className="w-4 h-4 stroke-[2.5]" />
+            <span>{hasUnsavedChanges ? 'Сохранить изменения' : 'Сохранено'}</span>
           </button>
         </div>
       </div>
 
-      {/* Success / Info Feedback Banner (In-Flow, non-overlapping) */}
-      {feedbackMessage && (
-        <div className="p-4 bg-[#36B875]/15 border border-[#36B875]/30 rounded-2xl text-xs font-bold text-[#258B55] flex items-center gap-2">
-          <Check className="w-4 h-4 shrink-0" />
-          <span>{feedbackMessage}</span>
-        </div>
-      )}
-
-      {/* 2. Clear Two-Column Layout (Left 65% / Right 35% in document flow) */}
+      {/* 2. 12-Column Grid Layout: 7 cols main, 5 cols rating panel, 24px gap (Requirement 3) */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-        {/* Left Column (65%): Logical Sections Form */}
-        <div className="lg:col-span-8 space-y-6">
-          {/* Section 1: Задача и контекст */}
-          <div className="bg-white rounded-2xl border border-[#E5E7EF] p-6 shadow-2xs space-y-4">
-            <div className="border-b border-[#E5E7EF] pb-2">
-              <h3 className="text-base font-extrabold text-[#17171C]">
-                1. Задача и бизнес-контекст
-              </h3>
-              <p className="text-xs text-[#667085]">
-                Определите формулировку задачи, текущий процесс и корневую проблему бизнеса
-              </p>
-            </div>
-
-            <div className="space-y-4">
-              <div>
-                <label className="block text-xs font-bold uppercase tracking-wider text-[#17171C] mb-1.5">
+        {/* Left Column (7 cols): Task Form with Accordion Sections */}
+        <div className="lg:col-span-7 space-y-4">
+          {/* Main Title & Theme Card */}
+          <div className="bg-white rounded-2xl border border-[#E2E5EE] p-5 shadow-xs space-y-4">
+            <div className="grid grid-cols-1 sm:grid-cols-12 gap-4">
+              <div className="sm:col-span-8 space-y-1">
+                <label className="text-xs font-bold text-[#17171C]">
                   Название задачи
                 </label>
                 <input
                   type="text"
                   value={formData.title}
                   onChange={(e) => handleFieldChange('title', e.target.value)}
-                  className="w-full h-11 px-4 rounded-xl bg-[#F5F6FA] border border-[#E5E7EF] text-sm font-bold text-[#17171C] focus:outline-none focus:border-[#7047EB] transition-colors"
+                  placeholder="Например: Детекция дубликатов объявлений на базе эмбеддингов"
+                  className="w-full h-11 px-3.5 rounded-xl border border-[#E2E5EE] bg-[#F8F9FC] text-sm font-semibold text-[#17171C] focus:bg-white focus:outline-none focus:border-[#7047EB] focus:ring-2 focus:ring-[#7047EB]/20 transition-all"
                 />
               </div>
 
-              <div>
-                <label className="block text-xs font-bold uppercase tracking-wider text-[#17171C] mb-1.5">
-                  Бизнес-контекст ситуации
+              <div className="sm:col-span-4 space-y-1">
+                <label className="text-xs font-bold text-[#17171C]">
+                  Отрасль / Направление
+                </label>
+                <select
+                  value={formData.theme}
+                  onChange={(e) => handleFieldChange('theme', e.target.value)}
+                  className="w-full h-11 px-3.5 rounded-xl border border-[#E2E5EE] bg-[#F8F9FC] text-xs font-bold text-[#17171C] focus:bg-white focus:outline-none focus:border-[#7047EB] transition-all cursor-pointer"
+                >
+                  <option value="AI / ML">AI / ML</option>
+                  <option value="FinTech">FinTech</option>
+                  <option value="LogTech">LogTech</option>
+                  <option value="GovTech">GovTech</option>
+                  <option value="HealthTech">HealthTech</option>
+                  <option value="E-commerce">E-commerce</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          {/* Accordion 1: Бизнес-контекст и потребность */}
+          <AccordionItem
+            stepNumber={1}
+            title="Бизнес-контекст и потребность"
+            subtitle="Какую проблему бизнеса решает задача"
+            summary={formData.need ? formData.need.slice(0, 80) + '...' : undefined}
+            isFilled={isContextFilled}
+            badgeText={isContextFilled ? 'Заполнено · 20 баллов' : 'Требует данных'}
+            scoreBonus="+20 б."
+            isOpen={activeSection === 'context'}
+            onToggle={() => toggleSection('context')}
+          >
+            <div className="space-y-4 pt-3">
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-bold text-[#17171C]">
+                    Потребность бизнеса (простыми словами)
+                  </label>
+                  <ContextHelp topic="readiness" />
+                </div>
+                <textarea
+                  rows={3}
+                  value={formData.need}
+                  onChange={(e) => handleFieldChange('need', e.target.value)}
+                  placeholder="Опишите, с какой трудностью сталкивается компания сейчас..."
+                  className="w-full p-3 rounded-xl border border-[#E2E5EE] bg-[#F8F9FC] text-xs font-medium text-[#17171C] focus:bg-white focus:outline-none focus:border-[#7047EB] transition-all"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-[#17171C]">
+                  Контекст задачи
                 </label>
                 <textarea
                   rows={3}
                   value={formData.context}
                   onChange={(e) => handleFieldChange('context', e.target.value)}
-                  placeholder="Где возникает кейс и как сейчас устроена работа компании..."
-                  className="w-full p-3.5 rounded-xl bg-[#F5F6FA] border border-[#E5E7EF] text-sm leading-relaxed text-[#17171C] focus:outline-none focus:border-[#7047EB] transition-colors resize-y"
+                  placeholder="Опишите текущий рабочий процесс и используемые инструменты..."
+                  className="w-full p-3 rounded-xl border border-[#E2E5EE] bg-[#F8F9FC] text-xs font-medium text-[#17171C] focus:bg-white focus:outline-none focus:border-[#7047EB] transition-all"
                 />
               </div>
+            </div>
+          </AccordionItem>
 
-              <div>
-                <label className="block text-xs font-bold uppercase tracking-wider text-[#17171C] mb-1.5">
-                  Потребность и проблема бизнеса
-                </label>
+          {/* Accordion 2: Предоставляемые данные и целевая аудитория */}
+          <AccordionItem
+            stepNumber={2}
+            title="Предоставляемые данные и аудитория"
+            subtitle="Что получит команда для старта"
+            summary={formData.dataProvided ? formData.dataProvided.slice(0, 80) + '...' : undefined}
+            isFilled={isDataFilled}
+            badgeText={isDataFilled ? 'Заполнено · 25 баллов' : 'Требует данных'}
+            scoreBonus="+25 б."
+            isOpen={activeSection === 'data'}
+            onToggle={() => toggleSection('data')}
+          >
+            <div className="space-y-4 pt-3">
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-bold text-[#17171C]">
+                    Данные, которые предоставляет компания
+                  </label>
+                  <ContextHelp topic="data" />
+                </div>
                 <textarea
                   rows={3}
-                  value={formData.need}
-                  onChange={(e) => handleFieldChange('need', e.target.value)}
-                  placeholder="В чем заключается проблема и какие потери несет бизнес от ручной работы..."
-                  className="w-full p-3.5 rounded-xl bg-[#F5F6FA] border border-[#E5E7EF] text-sm leading-relaxed text-[#17171C] focus:outline-none focus:border-[#7047EB] transition-colors resize-y"
+                  value={formData.dataProvided}
+                  onChange={(e) => handleFieldChange('dataProvided', e.target.value)}
+                  placeholder="Опишите датасеты, API, дампы, схему базы или тестовые выгрузки..."
+                  className="w-full p-3 rounded-xl border border-[#E2E5EE] bg-[#F8F9FC] text-xs font-medium text-[#17171C] focus:bg-white focus:outline-none focus:border-[#7047EB] transition-all"
                 />
               </div>
-            </div>
-          </div>
 
-          {/* Section 2: Пользователи и данные */}
-          <div className="bg-white rounded-2xl border border-[#E5E7EF] p-6 shadow-2xs space-y-4">
-            <div className="border-b border-[#E5E7EF] pb-2">
-              <h3 className="text-base font-extrabold text-[#17171C]">
-                2. Пользователи и предоставляемые данные
-              </h3>
-              <p className="text-xs text-[#667085]">
-                Опишите конечных потребителей решения и доступный датасет / API
-              </p>
-            </div>
-
-            <div className="space-y-4">
-              <div>
-                <label className="block text-xs font-bold uppercase tracking-wider text-[#17171C] mb-1.5">
-                  Целевые пользователи
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-[#17171C]">
+                  Целевая аудитория и конечные пользователи
                 </label>
                 <input
                   type="text"
                   value={formData.targetUsers}
                   onChange={(e) => handleFieldChange('targetUsers', e.target.value)}
-                  placeholder="Например: Эксперты-оценщики, операторы контакт-центра, клиенты сервиса"
-                  className="w-full h-11 px-4 rounded-xl bg-[#F5F6FA] border border-[#E5E7EF] text-sm font-semibold text-[#17171C] focus:outline-none focus:border-[#7047EB] transition-colors"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold uppercase tracking-wider text-[#17171C] mb-1.5 flex items-center justify-between">
-                  <span>Предоставляемые данные и API</span>
-                  <span className="text-[11px] font-bold text-[#7047EB]">Критично для высокого балла</span>
-                </label>
-                <textarea
-                  rows={4}
-                  value={formData.dataProvided}
-                  onChange={(e) => handleFieldChange('dataProvided', e.target.value)}
-                  placeholder="Укажите формат (CSV, JSON, REST API), размер датасета, схему полей и тестовую выборку..."
-                  className="w-full p-3.5 rounded-xl bg-[#F5F6FA] border border-[#E5E7EF] text-xs font-mono leading-relaxed text-[#17171C] focus:outline-none focus:border-[#7047EB] transition-colors resize-y"
+                  placeholder="Например: Модераторы контента, покупатели на сайте..."
+                  className="w-full h-11 px-3.5 rounded-xl border border-[#E2E5EE] bg-[#F8F9FC] text-xs font-medium text-[#17171C] focus:bg-white focus:outline-none focus:border-[#7047EB] transition-all"
                 />
               </div>
             </div>
-          </div>
+          </AccordionItem>
 
-          {/* Section 3: Ограничения */}
-          <div className="bg-white rounded-2xl border border-[#E5E7EF] p-6 shadow-2xs space-y-4">
-            <div className="border-b border-[#E5E7EF] pb-2">
-              <h3 className="text-base font-extrabold text-[#17171C]">
-                3. Технические ограничения и стек
-              </h3>
-              <p className="text-xs text-[#667085]">
-                Инфраструктура, целевые платформы, максимальная задержка и библиотеки
-              </p>
-            </div>
-
-            <div>
-              <label className="block text-xs font-bold uppercase tracking-wider text-[#17171C] mb-1.5">
-                Ограничения по стеку и вычислительным мощностям
-              </label>
-              <textarea
-                rows={3}
-                value={formData.constraints}
-                onChange={(e) => handleFieldChange('constraints', e.target.value)}
-                placeholder="Например: Python 3.11, Docker Compose, запуск на обычном CPU, задержка ответа < 250 мс..."
-                className="w-full p-3.5 rounded-xl bg-[#F5F6FA] border border-[#E5E7EF] text-sm leading-relaxed text-[#17171C] focus:outline-none focus:border-[#7047EB] transition-colors resize-y"
-              />
-            </div>
-          </div>
-
-          {/* Section 4: Результат и критерии успеха */}
-          <div className="bg-white rounded-2xl border border-[#E5E7EF] p-6 shadow-2xs space-y-4">
-            <div className="border-b border-[#E5E7EF] pb-2">
-              <h3 className="text-base font-extrabold text-[#17171C]">
-                4. Ожидаемый результат и критерии успеха
-              </h3>
-              <p className="text-xs text-[#667085]">
-                Что команды сдают на финал и как оценивается победа в числовых метриках
-              </p>
-            </div>
-
-            <div className="space-y-4">
-              <div>
-                <label className="block text-xs font-bold uppercase tracking-wider text-[#17171C] mb-1.5">
-                  Ожидаемый результат и артефакты
-                </label>
+          {/* Accordion 3: Ожидаемый результат решения */}
+          <AccordionItem
+            stepNumber={3}
+            title="Ожидаемый результат решения"
+            subtitle="Что именно должна сдать студенческая команда"
+            summary={formData.expectedResult ? formData.expectedResult.slice(0, 80) + '...' : undefined}
+            isFilled={isOutcomeFilled}
+            badgeText={isOutcomeFilled ? 'Заполнено · 20 баллов' : 'Требует данных'}
+            scoreBonus="+20 б."
+            isOpen={activeSection === 'outcome'}
+            onToggle={() => toggleSection('outcome')}
+          >
+            <div className="space-y-4 pt-3">
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-bold text-[#17171C]">
+                    Ожидаемый артефакт (результат спринта)
+                  </label>
+                  <ContextHelp topic="criteria" />
+                </div>
                 <textarea
                   rows={3}
                   value={formData.expectedResult}
                   onChange={(e) => handleFieldChange('expectedResult', e.target.value)}
-                  placeholder="1. Docker-микросервис с REST API. 2. Репозиторий GitHub с README. 3. Веб-демо..."
-                  className="w-full p-3.5 rounded-xl bg-[#F5F6FA] border border-[#E5E7EF] text-sm leading-relaxed text-[#17171C] focus:outline-none focus:border-[#7047EB] transition-colors resize-y"
+                  placeholder="Микросервис в Docker, веб-дэшборд, ML-пайплайн с валидацией..."
+                  className="w-full p-3 rounded-xl border border-[#E2E5EE] bg-[#F8F9FC] text-xs font-medium text-[#17171C] focus:bg-white focus:outline-none focus:border-[#7047EB] transition-all"
                 />
               </div>
+            </div>
+          </AccordionItem>
 
-              <div>
-                <label className="block text-xs font-bold uppercase tracking-wider text-[#17171C] mb-1.5 flex items-center justify-between">
-                  <span>Критерии успеха и числовые KPI</span>
-                  <span className="text-[11px] font-bold text-[#36B875]">Числовые метрики</span>
-                </label>
+          {/* Accordion 4: Критерии успеха и метрики */}
+          <AccordionItem
+            stepNumber={4}
+            title="Критерии успеха и метрики"
+            subtitle="Как бизнес поймёт, что задача решена качественно"
+            summary={formData.successCriteria ? formData.successCriteria.slice(0, 80) + '...' : undefined}
+            isFilled={isSuccessFilled}
+            badgeText={isSuccessFilled ? 'Заполнено · 15 баллов' : 'Требует данных'}
+            scoreBonus="+15 б."
+            isOpen={activeSection === 'success'}
+            onToggle={() => toggleSection('success')}
+          >
+            <div className="space-y-4 pt-3">
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-bold text-[#17171C]">
+                    Критерии успеха решения
+                  </label>
+                  <ContextHelp topic="criteria" />
+                </div>
                 <textarea
                   rows={3}
                   value={formData.successCriteria}
                   onChange={(e) => handleFieldChange('successCriteria', e.target.value)}
-                  placeholder="Например: F1 > 0.82, mAP@50 > 0.75, ускорение времени обработки на 15%..."
-                  className="w-full p-3.5 rounded-xl bg-[#F5F6FA] border border-[#E5E7EF] text-sm leading-relaxed text-[#17171C] focus:outline-none focus:border-[#7047EB] transition-colors resize-y"
+                  placeholder="Например: F1-score > 0.88, задержка ответа < 150мс..."
+                  className="w-full p-3 rounded-xl border border-[#E2E5EE] bg-[#F8F9FC] text-xs font-medium text-[#17171C] focus:bg-white focus:outline-none focus:border-[#7047EB] transition-all"
                 />
               </div>
             </div>
-          </div>
+          </AccordionItem>
 
-          {/* Section 5: Связь с бизнесом */}
-          <div className="bg-white rounded-2xl border border-[#E5E7EF] p-6 shadow-2xs space-y-4">
-            <div className="border-b border-[#E5E7EF] pb-2">
-              <h3 className="text-base font-extrabold text-[#17171C]">
-                5. Связь с бизнесом и менторство
-              </h3>
-              <p className="text-xs text-[#667085]">
-                Контакты для связи и формат проведения регулярных синхронизаций
-              </p>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div>
-                <label className="block text-xs font-bold uppercase tracking-wider text-[#17171C] mb-1.5">
-                  Контактное лицо
-                </label>
-                <input
-                  type="text"
-                  value={formData.contact}
-                  onChange={(e) => handleFieldChange('contact', e.target.value)}
-                  placeholder="Имя, должность, Telegram"
-                  className="w-full h-11 px-4 rounded-xl bg-[#F5F6FA] border border-[#E5E7EF] text-sm font-semibold text-[#17171C] focus:outline-none focus:border-[#7047EB] transition-colors"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold uppercase tracking-wider text-[#17171C] mb-1.5">
-                  Формат взаимодействия
+          {/* Accordion 5: Взаимодействие, контакты и ограничения */}
+          <AccordionItem
+            stepNumber={5}
+            title="Взаимодействие и ограничения"
+            subtitle="Формат менторства, контакты и технологический стек"
+            summary={formData.interactionFormat ? formData.interactionFormat.slice(0, 80) + '...' : undefined}
+            isFilled={isMentorshipFilled}
+            badgeText={isMentorshipFilled ? 'Заполнено · 20 баллов' : 'Требует данных'}
+            scoreBonus="+20 б."
+            isOpen={activeSection === 'mentorship'}
+            onToggle={() => toggleSection('mentorship')}
+          >
+            <div className="space-y-4 pt-3">
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-[#17171C]">
+                  Формат взаимодействия и синхронизаций
                 </label>
                 <input
                   type="text"
                   value={formData.interactionFormat}
                   onChange={(e) => handleFieldChange('interactionFormat', e.target.value)}
-                  placeholder="Еженедельный синк по средам, чат в Telegram"
-                  className="w-full h-11 px-4 rounded-xl bg-[#F5F6FA] border border-[#E5E7EF] text-sm font-semibold text-[#17171C] focus:outline-none focus:border-[#7047EB] transition-colors"
+                  placeholder="Например: Еженедельный синк по четвергам в Google Meet..."
+                  className="w-full h-11 px-3.5 rounded-xl border border-[#E2E5EE] bg-[#F8F9FC] text-xs font-medium text-[#17171C] focus:bg-white focus:outline-none focus:border-[#7047EB] transition-all"
                 />
               </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold text-[#17171C]">
+                    Контактное лицо ментора
+                  </label>
+                  <input
+                    type="text"
+                    value={formData.contact}
+                    onChange={(e) => handleFieldChange('contact', e.target.value)}
+                    placeholder="Имя, должность, Telegram..."
+                    className="w-full h-11 px-3.5 rounded-xl border border-[#E2E5EE] bg-[#F8F9FC] text-xs font-medium text-[#17171C] focus:bg-white focus:outline-none focus:border-[#7047EB] transition-all"
+                  />
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold text-[#17171C]">
+                    Ограничения и предпочтительный стек
+                  </label>
+                  <input
+                    type="text"
+                    value={formData.constraints}
+                    onChange={(e) => handleFieldChange('constraints', e.target.value)}
+                    placeholder="Python, Docker, FastAPI..."
+                    className="w-full h-11 px-3.5 rounded-xl border border-[#E2E5EE] bg-[#F8F9FC] text-xs font-medium text-[#17171C] focus:bg-white focus:outline-none focus:border-[#7047EB] transition-all"
+                  />
+                </div>
+              </div>
             </div>
-          </div>
-
-          {/* Bottom Actions Row in strict clear order */}
-          <div className="bg-white rounded-2xl border border-[#E5E7EF] p-5 shadow-2xs flex flex-wrap items-center justify-between gap-3">
-            <div className="text-xs text-[#667085]">
-              Последнее обновление: <strong className="text-[#17171C]">{formData.updatedAt}</strong>
-            </div>
-
-            <div className="flex items-center gap-3">
-              {/* 1. Вторичная: «Сохранить черновик» */}
-              <button
-                type="button"
-                onClick={handleSaveDraft}
-                className="h-11 px-4 bg-white border border-[#E5E7EF] hover:bg-[#F5F6FA] text-xs font-bold text-[#17171C] rounded-xl transition-colors flex items-center gap-1.5 cursor-pointer"
-              >
-                <Save className="w-3.5 h-3.5 text-[#667085]" />
-                <span>Сохранить черновик</span>
-              </button>
-
-              {/* 2. Основная: «Подтвердить изменения» */}
-              <button
-                type="button"
-                onClick={handleConfirmChanges}
-                disabled={!hasUnsavedChanges}
-                className={`h-11 px-5 rounded-xl text-xs font-bold transition-colors flex items-center gap-2 cursor-pointer shadow-xs ${
-                  hasUnsavedChanges
-                    ? 'bg-[#7047EB] hover:bg-[#5b32d6] text-white'
-                    : 'bg-[#F5F6FA] text-[#667085] cursor-not-allowed border border-[#E5E7EF]'
-                }`}
-              >
-                <CheckCheck className="w-4 h-4" />
-                <span>Подтвердить изменения</span>
-              </button>
-
-              {/* 3. «Опубликовать» (доступна после подтверждения или если уже подтверждена) */}
-              <button
-                type="button"
-                onClick={handlePublish}
-                disabled={hasUnsavedChanges}
-                className={`h-11 px-4 rounded-xl text-xs font-bold transition-colors flex items-center gap-1.5 cursor-pointer shadow-xs ${
-                  !hasUnsavedChanges
-                    ? 'bg-[#36B875] hover:bg-[#2fa066] text-white'
-                    : 'bg-[#F5F6FA] text-[#667085] cursor-not-allowed border border-[#E5E7EF]'
-                }`}
-              >
-                <Globe className="w-3.5 h-3.5" />
-                <span>{isPublished ? 'Опубликовано' : 'Опубликовать'}</span>
-              </button>
-            </div>
-          </div>
+          </AccordionItem>
         </div>
 
-        {/* Right Column (35%): Rating Panel in normal page flow */}
-        <div className="lg:col-span-4 space-y-4">
+        {/* Right Column (5 cols): Rating Panel (Requirement 3 & 4) */}
+        <div className="lg:col-span-5 sticky top-6">
           <RatingPanel
             rating={previewRating}
             hasUnsavedChanges={hasUnsavedChanges}
             onApplySuggestion={handleApplySuggestion}
+            onOpenMissionField={handleOpenMissionField}
             onConfirmChanges={handleConfirmChanges}
+            scoreGained={scoreGained}
           />
         </div>
       </div>
