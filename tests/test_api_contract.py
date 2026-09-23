@@ -106,6 +106,38 @@ class APIContractTests(unittest.TestCase):
         self.assertIn("readiness_level", schema["components"]["schemas"]["TaskResponse"]["properties"])
         self.assertIn("status", schema["components"]["schemas"]["TaskResponse"]["properties"])
 
+    def test_ai_failure_keeps_draft_and_request_can_be_repeated(self):
+        task = self.create_draft()
+        task_url = f"/api/tasks/{task['id']}"
+
+        with patch.dict(os.environ, {"AI_MODE": "disabled"}):
+            failed = self.client.post(f"{task_url}/questions")
+
+        self.assertEqual(failed.status_code, 503)
+        self.assertIn("Черновик сохранён", failed.json()["detail"])
+        self.assertEqual(self.client.get(task_url).json()["status"], "draft")
+
+        repeated = self.client.post(f"{task_url}/questions")
+        self.assertEqual(repeated.status_code, 200)
+        self.assertEqual(repeated.json()["provider"], "mock")
+
+    def test_health_reports_ai_mode_without_secrets(self):
+        with patch.dict(
+            os.environ,
+            {
+                "AI_MODE": "openai",
+                "OPENAI_API_KEY": "secret-test-key",
+                "OPENAI_MODEL": "gpt-5-mini",
+            },
+        ):
+            health = self.client.get("/api/health")
+
+        self.assertEqual(health.status_code, 200)
+        self.assertEqual(health.json()["ai_mode"], "openai")
+        self.assertTrue(health.json()["ai_ready"])
+        self.assertEqual(health.json()["ai_model"], "gpt-5-mini")
+        self.assertNotIn("secret-test-key", health.text)
+
 
 if __name__ == "__main__":
     unittest.main()

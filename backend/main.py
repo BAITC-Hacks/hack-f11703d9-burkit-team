@@ -25,7 +25,12 @@ from backend.schemas import (
     TaskUpdate,
     ValidationErrorResponse,
 )
-from backend.services.ai_service import AIResponseError, AIUnavailableError, generate_questions
+from backend.services.ai_service import (
+    AIResponseError,
+    AIUnavailableError,
+    generate_questions,
+    get_ai_runtime_info,
+)
 from backend.services.rating import calculate_task_rating
 
 
@@ -151,13 +156,20 @@ def root() -> dict[str, str]:
     response_model=HealthResponse,
     responses={503: {"model": ErrorResponse, "description": "База данных недоступна"}},
 )
-def health() -> dict[str, str]:
+def health() -> dict[str, Any]:
     try:
         with connect() as connection:
             connection.execute("SELECT 1")
     except sqlite3.Error as error:
         raise HTTPException(status_code=503, detail="База данных недоступна.") from error
-    return {"status": "ok", "database": "ok"}
+    ai = get_ai_runtime_info()
+    return {
+        "status": "ok",
+        "database": "ok",
+        "ai_mode": ai["mode"],
+        "ai_ready": ai["ready"],
+        "ai_model": ai["model"],
+    }
 
 
 @app.post(

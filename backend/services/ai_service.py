@@ -25,6 +25,10 @@ ALLOWED_QUESTION_FIELDS = {
     "interaction_format",
 }
 
+AI_MODES = {"mock", "openai", "disabled"}
+DEFAULT_OPENAI_MODEL = "gpt-5-mini"
+DEFAULT_OPENAI_TIMEOUT_SECONDS = 20.0
+
 
 SYSTEM_PROMPT = """
 Ты анализируешь черновик бизнес-задачи.
@@ -97,6 +101,35 @@ def build_questions_prompt(
             f"{json.dumps(task_fields, ensure_ascii=False)}"
         ),
     }
+
+
+def get_ai_runtime_info() -> dict[str, Any]:
+    """Возвращает публичное состояние AI без секретов."""
+    configured_mode = os.getenv("AI_MODE", "mock").strip().lower()
+    mode = configured_mode if configured_mode in AI_MODES else "invalid"
+    api_key_present = bool(os.getenv("OPENAI_API_KEY", "").strip())
+
+    return {
+        "mode": mode,
+        "ready": mode == "mock" or (mode == "openai" and api_key_present),
+        "model": (
+            os.getenv("OPENAI_MODEL", DEFAULT_OPENAI_MODEL)
+            if mode == "openai"
+            else None
+        ),
+    }
+
+
+def openai_timeout_seconds() -> float:
+    """Читает таймаут из окружения и ограничивает ошибочные значения."""
+    raw_value = os.getenv("OPENAI_TIMEOUT_SECONDS")
+    if raw_value is None:
+        return DEFAULT_OPENAI_TIMEOUT_SECONDS
+    try:
+        value = float(raw_value)
+    except ValueError:
+        return DEFAULT_OPENAI_TIMEOUT_SECONDS
+    return value if 1.0 <= value <= 50.0 else DEFAULT_OPENAI_TIMEOUT_SECONDS
 
 
 def mock_questions(
@@ -241,7 +274,14 @@ def openai_questions(
         )
 
     try:
-        from openai import OpenAI, OpenAIError
+        from openai import (
+            APIConnectionError,
+            APITimeoutError,
+            AuthenticationError,
+            OpenAI,
+            OpenAIError,
+            RateLimitError,
+        )
     except ImportError as error:
         raise AIUnavailableError(
             "Пакет openai не установлен. "
@@ -253,11 +293,12 @@ def openai_questions(
     try:
         response = OpenAI(
             api_key=api_key,
-            timeout=20.0,
+            timeout=openai_timeout_seconds(),
+            max_retries=1,
         ).responses.create(
             model=os.getenv(
                 "OPENAI_MODEL",
-                "gpt-6-luna",
+                DEFAULT_OPENAI_MODEL,
             ),
             instructions=prompt["system"],
             input=prompt["user"],
@@ -271,6 +312,26 @@ def openai_questions(
             },
             store=False,
         )
+    except APITimeoutError as error:
+        raise AIUnavailableError(
+            "AI не ответил за отведённое время. "
+            "Черновик сохранён; повторите запрос."
+        ) from error
+    except AuthenticationError as error:
+        raise AIUnavailableError(
+            "OpenAI не авторизован. "
+            "Черновик сохранён; проверьте серверную настройку API."
+        ) from error
+    except RateLimitError as error:
+        raise AIUnavailableError(
+            "OpenAI временно не принимает новые запросы. "
+            "Черновик сохранён; повторите запрос позже."
+        ) from error
+    except APIConnectionError as error:
+        raise AIUnavailableError(
+            "Не удалось подключиться к OpenAI. "
+            "Черновик сохранён; повторите запрос позже."
+        ) from error
     except OpenAIError as error:
         raise AIUnavailableError(
             "Не удалось получить ответ от AI. "
