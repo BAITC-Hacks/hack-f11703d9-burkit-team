@@ -291,7 +291,7 @@ export const TeamProfileScreen: React.FC<TeamProfileScreenProps> = ({
                 <span className="text-[#7047EB] tabular-nums">{teamProgress.progressPercent}%</span>
               </div>
               <XPProgressBar
-                progressPercent={teamProgress.progressPercent}
+                value={teamProgress.progressPercent}
                 heightClass="h-2.5"
                 showGlow={true}
                 showShimmer={true}

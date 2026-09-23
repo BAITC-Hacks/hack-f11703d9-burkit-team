@@ -1,5 +1,7 @@
 import React, { useState } from 'react';
 import { StudentProposal, Task, ProposalStatus, Milestone } from '../types';
+import { talapApi } from '../api/talapApi';
+import { useAsyncAction } from '../utils/useAsyncAction';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   Users, 
@@ -17,7 +19,9 @@ import {
   ShieldCheck,
   Check,
   X,
-  RotateCcw
+  RotateCcw,
+  Loader2,
+  AlertTriangle
 } from 'lucide-react';
 import { Select, SelectOption } from './ui/Select';
 import { useToast } from './ui/Toast';
@@ -68,6 +72,33 @@ export const ProposalsScreen: React.FC<ProposalsScreenProps> = ({
 
   const selectedProposal = filteredProposals.find(p => p.id === selectedProposalId) || filteredProposals[0];
 
+  // Async action for accepting team proposal
+  const acceptProposalAction = useAsyncAction(
+    async (proposalToAccept: StudentProposal) => {
+      return talapApi.updateProposalStatus(proposalToAccept.id, 'accepted');
+    },
+    {
+      onSuccess: (updatedProposal) => {
+        const updated = localProposals.map((p) => {
+          if (p.id === updatedProposal.id) {
+            return { ...p, status: 'accepted' as ProposalStatus };
+          }
+          if (p.taskId === updatedProposal.taskId && p.id !== updatedProposal.id) {
+            return { ...p, status: 'rejected' as ProposalStatus };
+          }
+          return p;
+        });
+
+        setLocalProposals(updated);
+        onUpdateProposalStatus(updatedProposal.id, 'accepted');
+        showToast(`Команда «${updatedProposal.teamName}» выбрана для реализации задачи!`, 'success');
+      },
+      onError: (errMsg) => {
+        showToast(`Ошибка выбора команды: ${errMsg}`, 'error');
+      },
+    }
+  );
+
   // Milestone Confirmation Modal state (Requirement 14)
   const [confirmMilestoneModal, setConfirmMilestoneModal] = useState<{
     proposal: StudentProposal;
@@ -90,11 +121,17 @@ export const ProposalsScreen: React.FC<ProposalsScreenProps> = ({
     })),
   ];
 
-  // Confirm Milestone Handler (Requirement 14)
+  // Confirm Milestone Handler with API capability check
   const handleConfirmMilestone = () => {
     if (!confirmMilestoneModal) return;
     const { proposal, milestone } = confirmMilestoneModal;
     const points = milestone.points || 350;
+
+    if (!talapApi.capabilities.hasMilestonesRemoteApi) {
+      showToast('Функция будет доступна после подключения сервера', 'info');
+      setConfirmMilestoneModal(null);
+      return;
+    }
 
     const updated = localProposals.map((p) => {
       if (p.id !== proposal.id) return p;
@@ -153,19 +190,8 @@ export const ProposalsScreen: React.FC<ProposalsScreenProps> = ({
 
   // Accept team proposal handler
   const handleAcceptTeam = (proposal: StudentProposal) => {
-    const updated = localProposals.map((p) => {
-      if (p.id === proposal.id) {
-        return { ...p, status: 'accepted' as ProposalStatus };
-      }
-      if (p.taskId === proposal.taskId && p.id !== proposal.id) {
-        return { ...p, status: 'rejected' as ProposalStatus };
-      }
-      return p;
-    });
-
-    setLocalProposals(updated);
-    onUpdateProposalStatus(proposal.id, 'accepted');
-    showToast(`Команда «${proposal.teamName}» выбрана для реализации задачи!`, 'success');
+    if (acceptProposalAction.isLoading) return;
+    acceptProposalAction.execute(proposal);
   };
 
   const getStatusBadge = (status: StudentProposal['status']) => {
@@ -323,18 +349,50 @@ export const ProposalsScreen: React.FC<ProposalsScreenProps> = ({
                   </div>
                 </div>
 
-                {/* Team Selection Action (if not accepted yet) */}
-                {selectedProposal.status !== 'accepted' && (
+                {/* Team Selection Action */}
+                {selectedProposal.status === 'accepted' ? (
+                  <div className="h-10 px-4 bg-[#E8FAF7] border border-[#2CC7B5]/40 text-[#149A8B] text-xs font-bold rounded-xl flex items-center gap-1.5 shrink-0 shadow-2xs">
+                    <Check className="w-4 h-4 stroke-[3]" />
+                    <span>Команда выбрана</span>
+                  </div>
+                ) : (
                   <button
                     type="button"
+                    disabled={acceptProposalAction.isLoading}
                     onClick={() => handleAcceptTeam(selectedProposal)}
-                    className="h-10 px-4 bg-[#7047EB] hover:bg-[#5E32DF] text-white text-xs font-bold rounded-xl transition-all flex items-center gap-1.5 cursor-pointer shadow-xs shrink-0"
+                    className="h-10 px-4 bg-[#7047EB] hover:bg-[#5E32DF] disabled:opacity-60 disabled:cursor-not-allowed text-white text-xs font-bold rounded-xl transition-all flex items-center gap-1.5 cursor-pointer shadow-xs shrink-0"
                   >
-                    <Check className="w-3.5 h-3.5 stroke-[3]" />
-                    <span>Выбрать команду</span>
+                    {acceptProposalAction.isLoading ? (
+                      <>
+                        <Loader2 className="w-3.5 h-3.5 animate-spin text-white" />
+                        <span>Подтверждаем…</span>
+                      </>
+                    ) : (
+                      <>
+                        <Check className="w-3.5 h-3.5 stroke-[3]" />
+                        <span>Выбрать команду</span>
+                      </>
+                    )}
                   </button>
                 )}
               </div>
+
+              {/* Error Banner with Retry */}
+              {acceptProposalAction.isError && (
+                <div className="p-3.5 bg-[#FFF0F0] border border-[#FF6266]/30 rounded-xl flex items-center justify-between gap-3 text-xs text-[#DC2626]">
+                  <div className="flex items-center gap-2 font-medium">
+                    <AlertTriangle className="w-4 h-4 shrink-0" />
+                    <span>{acceptProposalAction.error || 'Ошибка при выборе команды'}</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={acceptProposalAction.retry}
+                    className="px-3 py-1 bg-[#FF6266] text-white font-bold rounded-lg hover:bg-[#E5484D] text-xs cursor-pointer shrink-0"
+                  >
+                    Повторить
+                  </button>
+                </div>
+              )}
 
               {/* Task Link */}
               <div className="p-3 bg-[#F8F9FC] rounded-xl border border-[#E2E5EE] flex items-center justify-between text-xs">

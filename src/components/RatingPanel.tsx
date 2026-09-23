@@ -26,6 +26,7 @@ interface RatingPanelProps {
   onOpenMissionField?: (field: keyof Task) => void;
   onConfirmChanges: () => void;
   scoreGained?: number | null;
+  isTestMode?: boolean;
 }
 
 export const RatingPanel: React.FC<RatingPanelProps> = ({
@@ -35,9 +36,12 @@ export const RatingPanel: React.FC<RatingPanelProps> = ({
   onOpenMissionField,
   onConfirmChanges,
   scoreGained = null,
+  isTestMode = true,
 }) => {
   const [showAllCriteria, setShowAllCriteria] = useState(false);
   const [showCelebration, setShowCelebration] = useState(false);
+
+  const displayScore = Math.min(100, Math.max(0, rating.totalScore));
 
   // 4 Levels track: Черновик (0-39) -> Рабочая (40-69) -> Готовая (70-89) -> Приоритетная (90-100)
   const levels = [
@@ -162,6 +166,11 @@ export const RatingPanel: React.FC<RatingPanelProps> = ({
               Рейтинг задачи
             </span>
             <ContextHelp topic="readiness" />
+            {isTestMode && (
+              <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-[#FFF8E7] text-[#92400E] border border-[#FFC44D]/40">
+                Тестовый режим
+              </span>
+            )}
           </div>
           <span className={`text-xs font-bold px-2.5 py-0.5 rounded-lg ${lvlBadge.bg}`}>
             {rating.readinessLabel}
@@ -189,7 +198,7 @@ export const RatingPanel: React.FC<RatingPanelProps> = ({
                 strokeWidth="8"
                 strokeDasharray={circumference}
                 initial={{ strokeDashoffset: circumference }}
-                animate={{ strokeDashoffset }}
+                animate={{ strokeDashoffset: circumference - (displayScore / 100) * circumference }}
                 transition={{ duration: 0.8, ease: 'easeOut' }}
                 strokeLinecap="round"
                 fill="transparent"
@@ -197,7 +206,7 @@ export const RatingPanel: React.FC<RatingPanelProps> = ({
             </svg>
             <div className="absolute inset-0 flex flex-col items-center justify-center text-center">
               <span className={`text-xl font-black font-mono tracking-tight leading-none ${lvlBadge.textColor}`}>
-                {rating.totalScore}
+                {displayScore}
               </span>
               <span className="text-[10px] font-bold text-[#667085] mt-0.5">из 100</span>
             </div>
@@ -271,8 +280,8 @@ export const RatingPanel: React.FC<RatingPanelProps> = ({
         </motion.div>
       )}
 
-      {/* 4. Следующее рекомендуемое действие (Requirement 4.4) */}
-      {rating.nextBestStep && (
+      {/* 4. Следующее рекомендуемое действие (Requirement 4.4) - only when score < 100 */}
+      {displayScore < 100 && rating.nextBestStep && (
         <div className="p-4 rounded-xl bg-[#F0ECFF] border border-[#7047EB]/20 space-y-2.5">
           <div className="flex items-center gap-1.5 text-xs font-black text-[#7047EB]">
             <Zap className="w-4 h-4 fill-[#7047EB]" />

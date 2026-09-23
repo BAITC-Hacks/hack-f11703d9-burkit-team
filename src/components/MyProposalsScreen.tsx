@@ -1,21 +1,17 @@
 import React, { useState } from 'react';
-import { StudentProposal, Milestone } from '../types';
+import { StudentProposal } from '../types';
+import { talapApi } from '../api/talapApi';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   Send, 
-  CheckCircle2, 
   Clock, 
-  ExternalLink, 
-  Building2, 
   ArrowRight,
   Upload,
-  Check,
-  ChevronDown,
-  Sparkles,
-  Award
+  FileText
 } from 'lucide-react';
 import { useToast } from './ui/Toast';
-import { Disclosure } from './ui/Disclosure';
+import { MilestoneRoadmap } from './ui/MilestoneRoadmap';
+import { CollapsibleCard } from './ui/CollapsibleCard';
 
 interface MyProposalsScreenProps {
   proposals: StudentProposal[];
@@ -56,6 +52,13 @@ export const MyProposalsScreen: React.FC<MyProposalsScreenProps> = ({
   const handleUploadProof = () => {
     if (!activeProofModal || !proofUrlInput.trim()) return;
     const { proposalId, milestoneId } = activeProofModal;
+
+    if (!talapApi.capabilities.hasMilestonesRemoteApi) {
+      showToast('Функция будет доступна после подключения сервера', 'info');
+      setActiveProofModal(null);
+      setProofUrlInput('');
+      return;
+    }
 
     const updated = localProposals.map((p) => {
       if (p.id !== proposalId) return p;
@@ -113,7 +116,7 @@ export const MyProposalsScreen: React.FC<MyProposalsScreenProps> = ({
 
   return (
     <div className="flex-1 flex flex-col p-8 overflow-y-auto space-y-6 max-w-7xl mx-auto w-full">
-      {/* 1. Header with single H1 and 1-line subtitle (Requirement 2 & 17) */}
+      {/* 1. Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div className="space-y-1">
           <div className="flex items-center gap-1.5 text-xs font-bold text-[#667085]">
@@ -121,10 +124,10 @@ export const MyProposalsScreen: React.FC<MyProposalsScreenProps> = ({
             <span>Кабинет студенческой команды</span>
           </div>
           <h1 className="text-2xl sm:text-3xl font-black text-[#17171C] tracking-tight">
-            Мои поданные отклики
+            Мои отклики и этапы
           </h1>
           <p className="text-xs sm:text-sm text-[#667085] max-w-xl">
-            Отслеживайте статус рассмотрения откликов бизнесом и сдавайте выполненные этапы спринтов.
+            Отслеживайте статус спринтов и сдавайте результаты для начисления XP.
           </p>
         </div>
 
@@ -133,12 +136,12 @@ export const MyProposalsScreen: React.FC<MyProposalsScreenProps> = ({
           onClick={onExploreCatalog}
           className="h-10 px-4 bg-white border border-[#E2E5EE] hover:bg-[#F4F5F9] text-[#17171C] text-xs font-bold rounded-xl transition-all flex items-center gap-2 cursor-pointer shadow-2xs shrink-0"
         >
-          <span>Найти ещё задачу</span>
+          <span>Найти задачу</span>
           <ArrowRight className="w-3.5 h-3.5" />
         </button>
       </div>
 
-      {/* 2. Master-Detail Layout (Requirement 7): 5 cols left, 7 cols right, gap 24px */}
+      {/* 2. Master-Detail Layout */}
       {localProposals.length === 0 ? (
         <div className="bg-white rounded-2xl border border-[#E2E5EE] p-12 text-center space-y-4">
           <div className="w-12 h-12 rounded-xl bg-[#E8FAF7] text-[#149A8B] flex items-center justify-center mx-auto">
@@ -149,7 +152,7 @@ export const MyProposalsScreen: React.FC<MyProposalsScreenProps> = ({
               У вашей команды пока нет активных откликов
             </h2>
             <p className="text-xs text-[#667085] max-w-sm mx-auto">
-              Выберите задачу в каталоге и отправьте структурированное архитектурное предложение.
+              Выберите практическую задачу в каталоге и отправьте предложение.
             </p>
           </div>
           <button
@@ -162,26 +165,19 @@ export const MyProposalsScreen: React.FC<MyProposalsScreenProps> = ({
         </div>
       ) : (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-          {/* Left Master List (5 cols): Compact cards with task, company, status, nearest milestone, deadline, earned XP (Requirement 7) */}
+          {/* Left Master List (5 cols) */}
           <div className="lg:col-span-5 space-y-3">
             <div className="text-xs font-bold text-[#667085] px-1 flex items-center justify-between">
-              <span>Мои отклики ({localProposals.length})</span>
+              <span>Мои проекты ({localProposals.length})</span>
               <span>Выберите для деталей</span>
             </div>
 
             <div className="space-y-2.5">
               {localProposals.map((proposal) => {
                 const isSelected = selectedProposal?.id === proposal.id;
-                
-                // Earned XP strictly from confirmed milestones
-                const earnedXP = (proposal.milestones || [])
-                  .filter(m => m.status === 'confirmed')
-                  .reduce((sum, m) => sum + (m.points || 0), 0);
-
-                // Nearest milestone
-                const nearest = (proposal.milestones || []).find(
-                  m => m.status === 'submitted' || m.status === 'pending'
-                ) || (proposal.milestones || [])[0];
+                const milestones = proposal.milestones || [];
+                const confirmedCount = milestones.filter(m => m.status === 'confirmed').length;
+                const earnedXP = milestones.filter(m => m.status === 'confirmed').reduce((s, m) => s + (m.points || 0), 0);
 
                 return (
                   <div
@@ -189,14 +185,13 @@ export const MyProposalsScreen: React.FC<MyProposalsScreenProps> = ({
                     onClick={() => setSelectedProposalId(proposal.id)}
                     className={`p-4 rounded-2xl border transition-all cursor-pointer space-y-2.5 ${
                       isSelected
-                        ? 'bg-white border-[#2CC7B5] ring-2 ring-[#2CC7B5]/20 shadow-sm'
-                        : 'bg-white border-[#E2E5EE] hover:border-[#2CC7B5]/40 shadow-2xs'
+                        ? 'bg-white border-[#7047EB] ring-2 ring-[#7047EB]/15 shadow-sm'
+                        : 'bg-white border-[#E2E5EE] hover:border-[#7047EB]/40 shadow-2xs'
                     }`}
                   >
-                    {/* Task Title & Status */}
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0">
-                        <h2 className="text-sm font-black text-[#17171C] truncate">
+                        <h2 className="text-xs sm:text-sm font-black text-[#17171C] truncate">
                           {proposal.taskTitle}
                         </h2>
                         <span className="text-[11px] text-[#667085] font-semibold block truncate">
@@ -206,28 +201,15 @@ export const MyProposalsScreen: React.FC<MyProposalsScreenProps> = ({
                       {getStatusBadge(proposal.status)}
                     </div>
 
-                    {/* Nearest milestone & deadline */}
-                    {nearest && (
-                      <div className="p-2.5 bg-[#F8F9FC] rounded-xl text-xs space-y-1 border border-[#E2E5EE]/60">
-                        <div className="text-[10px] uppercase font-bold text-[#667085]">
-                          Ближайший этап:
-                        </div>
-                        <div className="font-semibold text-[#17171C] truncate">
-                          {nearest.title}
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Deadline & Earned XP (Requirement 7) */}
                     <div className="flex items-center justify-between text-xs pt-1 border-t border-[#F0F2F7]">
-                      <div className="flex items-center gap-1 text-[#667085] font-medium text-[11px]">
+                      <div className="flex items-center gap-1.5 text-[11px] text-[#667085] font-medium">
                         <Clock className="w-3.5 h-3.5" />
-                        <span>Срок: {proposal.timeline}</span>
+                        <span>Спринты: {confirmedCount} / {milestones.length}</span>
                       </div>
 
-                      <div className="text-xs font-black text-[#7047EB] bg-[#F0ECFF] px-2 py-0.5 rounded-md">
-                        {earnedXP} XP получено
-                      </div>
+                      <span className="text-xs font-black text-[#7047EB]">
+                        {earnedXP > 0 ? `+${earnedXP} XP` : '0 XP'}
+                      </span>
                     </div>
                   </div>
                 );
@@ -235,14 +217,14 @@ export const MyProposalsScreen: React.FC<MyProposalsScreenProps> = ({
             </div>
           </div>
 
-          {/* Right Detail Panel (7 cols): Full view of selected proposal (Requirement 7) */}
+          {/* Right Detail Panel (7 cols) */}
           {selectedProposal && (
-            <div className="lg:col-span-7 bg-white rounded-2xl border border-[#E2E5EE] p-6 shadow-xs space-y-6">
+            <div className="lg:col-span-7 bg-white rounded-2xl border border-[#E2E5EE] p-6 shadow-xs space-y-5">
               {/* Header */}
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-[#F0F2F7]">
                 <div className="space-y-1">
                   <div className="flex items-center gap-2">
-                    <h2 className="text-xl font-black text-[#17171C]">
+                    <h2 className="text-lg sm:text-xl font-black text-[#17171C]">
                       {selectedProposal.taskTitle}
                     </h2>
                     {getStatusBadge(selectedProposal.status)}
@@ -250,7 +232,7 @@ export const MyProposalsScreen: React.FC<MyProposalsScreenProps> = ({
                   <div className="text-xs text-[#667085] flex items-center gap-2">
                     <span className="font-semibold text-[#17171C]">{selectedProposal.companyName}</span>
                     <span>•</span>
-                    <span>Срок проекта: {selectedProposal.timeline}</span>
+                    <span>Срок: {selectedProposal.timeline}</span>
                   </div>
                 </div>
 
@@ -264,145 +246,29 @@ export const MyProposalsScreen: React.FC<MyProposalsScreenProps> = ({
                 </button>
               </div>
 
-              {/* Submitted Idea (with Disclosure per Requirement 7 & 16) */}
-              <div className="space-y-2 bg-[#FAF8FF] p-4 rounded-xl border border-[#7047EB]/15">
-                <Disclosure
-                  title="Отправленное предложение команды"
-                  initialOpen={false}
-                  showText="Показать детали идеи"
-                  hideText="Скрыть детали идеи"
-                >
-                  <p className="text-xs text-[#17171C] leading-relaxed whitespace-pre-line pt-2">
-                    {selectedProposal.idea}
-                  </p>
-                </Disclosure>
-              </div>
+              {/* Collapsible Proposal Idea */}
+              <CollapsibleCard
+                title="Идея решения команды"
+                subtitle="Архитектурный подход и технологии"
+                icon={<FileText className="w-4 h-4" />}
+                defaultOpen={false}
+              >
+                <p className="text-xs text-[#17171C] leading-relaxed whitespace-pre-line pt-1">
+                  {selectedProposal.idea}
+                </p>
+              </CollapsibleCard>
 
-              {/* Milestones list (Completed collapsed by default, current expanded per Requirement 7) */}
-              <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <h3 className="text-xs font-bold uppercase tracking-wider text-[#667085]">
-                    Этапы реализации (спринты)
-                  </h3>
-                  <span className="text-xs font-bold text-[#7047EB]">
-                    Заработано: {(selectedProposal.milestones || []).filter(m => m.status === 'confirmed').reduce((s, m) => s + (m.points || 0), 0)} XP
-                  </span>
-                </div>
-
-                <div className="space-y-3">
-                  {(selectedProposal.milestones || []).map((m, idx) => {
-                    const isConfirmed = m.status === 'confirmed';
-                    const isSubmitted = m.status === 'submitted';
-                    const isCurrent = !isConfirmed && (isSubmitted || idx === 0 || (selectedProposal.milestones?.[idx - 1]?.status === 'confirmed'));
-
-                    return (
-                      <div
-                        key={m.id}
-                        className={`p-4 rounded-xl border transition-all ${
-                          isConfirmed
-                            ? 'bg-[#E8FAF7]/20 border-[#38BB78]/30'
-                            : isSubmitted
-                            ? 'bg-[#FFF8E7]/30 border-[#FFC44D]/40 ring-1 ring-[#FFC44D]/25'
-                            : isCurrent
-                            ? 'bg-white border-[#2CC7B5] shadow-2xs'
-                            : 'bg-[#F9FAFC] border-[#E2E5EE] opacity-80'
-                        }`}
-                      >
-                        <div className="flex items-start justify-between gap-3">
-                          <div className="space-y-1.5 flex-1 min-w-0">
-                            <div className="flex items-center gap-2 flex-wrap">
-                              <h4 className="text-xs font-bold text-[#17171C]">
-                                {m.title}
-                              </h4>
-                              {isConfirmed ? (
-                                <span className="text-[10px] font-bold px-2 py-0.2 rounded bg-[#E8FAF7] text-[#149A8B] flex items-center gap-1">
-                                  <Check className="w-3 h-3 stroke-[3]" />
-                                  <span>Подтверждено · +{m.points} XP</span>
-                                </span>
-                              ) : isSubmitted ? (
-                                <span className="text-[10px] font-bold px-2 py-0.2 rounded bg-[#FFF8E7] text-[#92400E]">
-                                  На проверке бизнесом
-                                </span>
-                              ) : (
-                                <span className="text-[10px] font-semibold px-2 py-0.2 rounded bg-[#F4F5F9] text-[#667085]">
-                                  В работе · {m.points} XP
-                                </span>
-                              )}
-                            </div>
-
-                            {/* Completed milestones collapse details by default per Requirement 7 */}
-                            {isConfirmed ? (
-                              <Disclosure
-                                showText="Показать детали этапа"
-                                hideText="Скрыть детали этапа"
-                                initialOpen={false}
-                              >
-                                <p className="text-xs text-[#667085] leading-relaxed pt-1">
-                                  {m.description}
-                                </p>
-                                {m.proofUrl && (
-                                  <div className="pt-2">
-                                    <a
-                                      href={m.proofUrl}
-                                      target="_blank"
-                                      rel="noopener noreferrer"
-                                      className="text-xs font-bold text-[#7047EB] hover:underline inline-flex items-center gap-1"
-                                    >
-                                      <ExternalLink className="w-3 h-3" />
-                                      <span>Сданный результат: {m.proofUrl}</span>
-                                    </a>
-                                  </div>
-                                )}
-                              </Disclosure>
-                            ) : (
-                              /* Current active milestone is expanded by default (Requirement 7) */
-                              <div className="space-y-2 pt-1">
-                                {m.description && (
-                                  <p className="text-xs text-[#667085] leading-relaxed">
-                                    {m.description}
-                                  </p>
-                                )}
-
-                                {m.feedback && (
-                                  <div className="p-2.5 bg-[#FFF8E7] border border-[#FFC44D]/40 rounded-lg text-xs text-[#92400E]">
-                                    <span className="font-bold">Замечания заказчика:</span> {m.feedback}
-                                  </div>
-                                )}
-
-                                {m.proofUrl && (
-                                  <div className="text-xs text-[#7047EB] font-semibold flex items-center gap-1">
-                                    <ExternalLink className="w-3.5 h-3.5" />
-                                    <span>Отправлено на проверку: {m.proofUrl}</span>
-                                  </div>
-                                )}
-                              </div>
-                            )}
-                          </div>
-
-                          {/* Action Button: Submit proof for active milestone */}
-                          {!isConfirmed && (
-                            <button
-                              type="button"
-                              onClick={() => setActiveProofModal({
-                                proposalId: selectedProposal.id,
-                                milestoneId: m.id,
-                                milestoneTitle: m.title
-                              })}
-                              className={`h-9 px-3 text-xs font-bold rounded-xl transition-all flex items-center gap-1.5 shrink-0 cursor-pointer ${
-                                isSubmitted
-                                  ? 'bg-white border border-[#E2E5EE] text-[#17171C] hover:bg-[#F4F5F9]'
-                                  : 'bg-[#2CC7B5] hover:bg-[#20AE9D] text-white shadow-xs'
-                              }`}
-                            >
-                              <Upload className="w-3.5 h-3.5" />
-                              <span>{isSubmitted ? 'Обновить ссылку' : 'Сдать результат'}</span>
-                            </button>
-                          )}
-                        </div>
-                      </div>
-                    );
+              {/* Vertical Milestone Map */}
+              <div className="pt-2">
+                <MilestoneRoadmap
+                  milestones={selectedProposal.milestones || []}
+                  onOpenProofModal={(m) => setActiveProofModal({
+                    proposalId: selectedProposal.id,
+                    milestoneId: m.id,
+                    milestoneTitle: m.title
                   })}
-                </div>
+                  isLocked={selectedProposal.status !== 'accepted'}
+                />
               </div>
             </div>
           )}
@@ -425,7 +291,7 @@ export const MyProposalsScreen: React.FC<MyProposalsScreenProps> = ({
 
               <div className="space-y-1">
                 <h3 className="text-base font-black text-[#17171C]">
-                  Сдать результат этапа
+                  Сдать результат спринта
                 </h3>
                 <p className="text-xs text-[#667085]">
                   «{activeProofModal.milestoneTitle}»
@@ -434,7 +300,7 @@ export const MyProposalsScreen: React.FC<MyProposalsScreenProps> = ({
 
               <div className="space-y-1.5">
                 <label className="text-xs font-bold text-[#17171C]">
-                  Ссылка на результат (GitHub репозиторий, демо или релиз)
+                  Ссылка на результат (GitHub, Demo, API docs или релиз)
                 </label>
                 <input
                   type="url"
