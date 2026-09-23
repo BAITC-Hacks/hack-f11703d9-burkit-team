@@ -84,3 +84,31 @@ uvicorn backend.main:app --reload
 ```powershell
 python -m unittest discover -s tests -v
 ```
+
+## Публикация в Vercel
+
+Проект публикуется из корня репозитория: Vite собирает frontend в `dist`,
+а `api/index.py` запускает FastAPI. Конфигурация находится в `vercel.json`.
+Загрузка исходников через Vercel Drop не заменяет сборку проекта.
+
+Для production подключите Turso в разделе Storage проекта. Интеграция
+должна добавить серверные переменные `TURSO_DATABASE_URL` и `TURSO_AUTH_TOKEN`.
+При наличии этих переменных backend обращается к облачной SQLite; локально
+без них используется `backend/data/app.db`. На Vercel запуск без облачной
+базы завершается ошибкой, чтобы записи не терялись во временном файле.
+
+Для публикации в существующий проект:
+
+```powershell
+npx vercel link --project hack-f11703d9-burkit-team --scope burkit
+npx vercel deploy --prod --scope burkit
+```
+
+После публикации проверьте `/`, `/api/health`, `/api/tasks` и `/docs`.
+Для реального AI задайте в Vercel `AI_MODE=openai`, `OPENAI_API_KEY`
+и доступную вашему аккаунту модель `OPENAI_MODEL`, затем выполните новый деплой.
+Без настройки AI используется явно обозначенный режим `mock`.
+
+Текущие экраны frontend используют локальные моки. Публикация frontend и API
+сама по себе не подключает формы к базе: интеграция экранов с API — отдельная
+задача. У backend пока нет авторизации и проверки владельца задачи.
