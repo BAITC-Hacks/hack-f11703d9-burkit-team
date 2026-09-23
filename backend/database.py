@@ -15,6 +15,16 @@ DEFAULT_DATABASE_PATH = BACKEND_DIR / "data" / "app.db"
 SCHEMA_PATH = BACKEND_DIR / "schema.sql"
 
 
+class LocalConnection(sqlite3.Connection):
+    """Закрывает SQLite после завершения транзакции, как облачный адаптер."""
+
+    def __exit__(self, *args):
+        try:
+            return super().__exit__(*args)
+        finally:
+            self.close()
+
+
 def database_path() -> Path:
     """Возвращает путь к рабочей базе или к базе, указанной в окружении."""
     configured = os.getenv("DATABASE_PATH")
@@ -35,7 +45,7 @@ def connect() -> sqlite3.Connection:
         raise sqlite3.OperationalError("Для Vercel настройте облачную базу Turso.")
     path = database_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    connection = sqlite3.connect(path)
+    connection = sqlite3.connect(path, factory=LocalConnection)
     connection.row_factory = sqlite3.Row
     connection.execute("PRAGMA foreign_keys = ON")
     return connection
