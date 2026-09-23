@@ -95,44 +95,21 @@ def proposal_or_404(proposal_id: int) -> dict[str, Any]:
     return proposal
 
 
-def rating_input(task: dict[str, Any]) -> dict[str, Any]:
-    """Приводит поля backend к формату функции рейтинга."""
-    context_need = None
-    if task.get("context") and task.get("need"):
-        context_need = f"{task['context']}\n{task['need']}"
-
-    business_contact = None
-    if task.get("contact") and task.get("interaction_format"):
-        business_contact = (
-            f"{task['contact']}\n"
-            f"{task['interaction_format']}"
-        )
-
-    return {
-        "context_need": context_need,
-        "data_materials": task.get("data_description"),
-        "expected_result": task.get("expected_result"),
-        "success_criteria": task.get("success_criteria"),
-        "constraints": task.get("constraints"),
-        "target_users": task.get("users"),
-        "business_contact": business_contact,
-    }
-
-
 def calculate_and_save_rating(task_id: int) -> dict[str, Any]:
     """Считает рейтинг, сохраняет балл и возвращает расшифровку."""
     task = task_or_404(task_id)
-    rating = calculate_task_rating(rating_input(task))
+    rating = calculate_task_rating(task)
 
     with connect() as connection:
         connection.execute(
             """
             UPDATE tasks
             SET readiness_score = ?,
+                readiness_level = ?,
                 updated_at = CURRENT_TIMESTAMP
             WHERE id = ?
             """,
-            (rating["score"], task_id),
+            (rating["score"], rating["readiness_level"], task_id),
         )
 
     return rating
