@@ -15,6 +15,16 @@ DEFAULT_DATABASE_PATH = BACKEND_DIR / "data" / "app.db"
 SCHEMA_PATH = BACKEND_DIR / "schema.sql"
 
 
+class LocalConnection(sqlite3.Connection):
+    """Закрывает SQLite после завершения транзакции, как облачный адаптер."""
+
+    def __exit__(self, *args):
+        try:
+            return super().__exit__(*args)
+        finally:
+            self.close()
+
+
 def database_path() -> Path:
     """Возвращает путь к рабочей базе или к базе, указанной в окружении."""
     configured = os.getenv("DATABASE_PATH")
@@ -23,9 +33,19 @@ def database_path() -> Path:
 
 def connect() -> sqlite3.Connection:
     """Открывает соединение с включёнными внешними ключами."""
+    url = os.getenv("TURSO_DATABASE_URL")
+    if url:
+        from backend.cloud_database import CloudConnection
+
+        token = os.getenv("TURSO_AUTH_TOKEN")
+        if not token:
+            raise sqlite3.OperationalError("Не задан TURSO_AUTH_TOKEN.")
+        return CloudConnection(url, token)
+    if os.getenv("VERCEL"):
+        raise sqlite3.OperationalError("Для Vercel настройте облачную базу Turso.")
     path = database_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    connection = sqlite3.connect(path)
+    connection = sqlite3.connect(path, factory=LocalConnection)
     connection.row_factory = sqlite3.Row
     connection.execute("PRAGMA foreign_keys = ON")
     return connection

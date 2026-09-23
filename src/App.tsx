@@ -1,8 +1,10 @@
 import React, { useState } from 'react';
 import { INITIAL_TASKS, INITIAL_PROPOSALS } from './data/mockData';
-import { Task, StudentProposal, ActiveScreen, UserRole, ProposalStatus } from './types';
+import { Task, StudentProposal, ActiveScreen, UserRole, ProposalStatus, TeamLevelInfo } from './types';
+import { calculateTeamProgress, getTeamLevelInfo } from './utils/teamProgress';
 import { Sidebar } from './components/Sidebar';
 import { Header } from './components/Header';
+import { OverviewScreen } from './components/OverviewScreen';
 import { CatalogScreen } from './components/CatalogScreen';
 import { CreateTaskScreen } from './components/CreateTaskScreen';
 import { EditTaskScreen } from './components/EditTaskScreen';
@@ -10,14 +12,29 @@ import { StudentTaskScreen } from './components/StudentTaskScreen';
 import { ProposalsScreen } from './components/ProposalsScreen';
 import { MyProposalsScreen } from './components/MyProposalsScreen';
 import { TeamProfileScreen } from './components/TeamProfileScreen';
+import { TeamProgressScreen } from './components/TeamProgressScreen';
+import { WelcomeModal } from './components/WelcomeModal';
+import { LevelUpModal } from './components/ui/LevelUpModal';
+import { ToastProvider } from './components/ui/Toast';
 
 export default function App() {
   const [userRole, setUserRole] = useState<UserRole>('business');
-  const [currentScreen, setCurrentScreen] = useState<ActiveScreen>('catalog');
+  const [currentScreen, setCurrentScreen] = useState<ActiveScreen>('overview');
   const [tasks, setTasks] = useState<Task[]>(INITIAL_TASKS);
   const [proposals, setProposals] = useState<StudentProposal[]>(INITIAL_PROPOSALS);
   const [activeTaskId, setActiveTaskId] = useState<string>('task-1');
   const [filterProposalsTaskId, setFilterProposalsTaskId] = useState<string>('all');
+  
+  // Level up modal celebration state
+  const [levelUpInfo, setLevelUpInfo] = useState<{ isOpen: boolean; levelInfo: TeamLevelInfo | null }>({
+    isOpen: false,
+    levelInfo: null,
+  });
+
+  // Welcome role selection modal: show on first visit if not selected
+  const [showWelcomeModal, setShowWelcomeModal] = useState<boolean>(() => {
+    return !localStorage.getItem('talap_role_selected');
+  });
 
   const activeTask = tasks.find((t) => t.id === activeTaskId) || tasks[0];
 
@@ -25,14 +42,21 @@ export default function App() {
   const handleRoleChange = (newRole: UserRole) => {
     setUserRole(newRole);
     if (newRole === 'business') {
-      if (currentScreen === 'my-proposals' || currentScreen === 'team-profile') {
-        setCurrentScreen('catalog');
+      if (currentScreen === 'my-proposals' || currentScreen === 'team-profile' || currentScreen === 'team-progress') {
+        setCurrentScreen('overview');
       }
     } else {
       if (currentScreen === 'create' || currentScreen === 'edit' || currentScreen === 'proposals') {
-        setCurrentScreen('catalog');
+        setCurrentScreen('overview');
       }
     }
+  };
+
+  const handleSelectRoleFromWelcome = (selectedRole: UserRole) => {
+    setUserRole(selectedRole);
+    localStorage.setItem('talap_role_selected', selectedRole);
+    setShowWelcomeModal(false);
+    setCurrentScreen('overview');
   };
 
   // Handler for saving/confirming task updates in EditTaskScreen
@@ -73,6 +97,53 @@ export default function App() {
     );
   };
 
+  // Handler for confirming milestones by business (Requirement 13 & 14)
+  const handleMilestoneConfirmed = (proposalId: string, milestoneId: string, points: number) => {
+    const oldProgress = calculateTeamProgress(proposals);
+    const oldLevel = oldProgress.levelInfo.level;
+
+    const updated = proposals.map((p) => {
+      if (p.id !== proposalId) return p;
+      const updatedMilestones = (p.milestones || []).map((m) => {
+        if (m.id === milestoneId) {
+          return { ...m, status: 'confirmed' as const };
+        }
+        return m;
+      });
+      return {
+        ...p,
+        milestones: updatedMilestones,
+        teamProgressPoints: (p.teamProgressPoints || 0) + points,
+      };
+    });
+
+    setProposals(updated);
+
+    const newProgress = calculateTeamProgress(updated);
+    if (newProgress.levelInfo.level > oldLevel) {
+      setLevelUpInfo({
+        isOpen: true,
+        levelInfo: newProgress.levelInfo,
+      });
+    }
+  };
+
+  // Handler for student submitting milestone proof
+  const handleMilestoneSubmitted = (proposalId: string, milestoneId: string, proofUrl: string) => {
+    setProposals((prev) =>
+      prev.map((p) => {
+        if (p.id !== proposalId) return p;
+        const updatedMilestones = (p.milestones || []).map((m) => {
+          if (m.id === milestoneId) {
+            return { ...m, status: 'submitted' as const, proofUrl };
+          }
+          return m;
+        });
+        return { ...p, milestones: updatedMilestones };
+      })
+    );
+  };
+
   // Switch to specific task in catalog or editor
   const handleOpenTask = (task: Task) => {
     setActiveTaskId(task.id);
@@ -88,114 +159,180 @@ export default function App() {
     setCurrentScreen('edit');
   };
 
-  const handleViewProposals = (taskId: string) => {
-    setFilterProposalsTaskId(taskId);
-    setCurrentScreen('proposals');
-  };
-
   const pendingProposalsCount = proposals.filter((p) => p.status === 'new' || p.status === 'pending').length;
 
   return (
-    <div className="min-h-screen bg-[#F5F6FA] text-[#17171C] flex font-sans antialiased">
-      {/* 1. Left Sidebar (Fixed width 256px, in natural layout) */}
-      <Sidebar
-        currentScreen={currentScreen}
-        userRole={userRole}
-        onRoleChange={handleRoleChange}
-        onNavigate={(screen) => {
-          if (screen === 'proposals') {
-            setFilterProposalsTaskId('all');
-          }
-          setCurrentScreen(screen);
-        }}
-        tasksCount={tasks.length}
-        proposalsCount={proposals.length}
-        pendingProposalsCount={pendingProposalsCount}
-        myProposalsCount={proposals.length}
-      />
-
-      {/* 2. Main Content Layout (Non-overlapping, scrolls naturally) */}
-      <div className="flex-1 flex flex-col min-w-0 bg-[#F5F6FA]">
-        {/* Header in normal page flow */}
-        <Header
+    <ToastProvider>
+      <div className="min-h-screen xl:h-[100dvh] xl:overflow-hidden bg-[#F5F6FA] text-[#17171C] flex flex-col xl:grid xl:grid-cols-[256px_minmax(0,1fr)] font-sans antialiased">
+        {/* 1. Left Sidebar */}
+        <Sidebar
           currentScreen={currentScreen}
           userRole={userRole}
-          activeTaskTitle={activeTask?.title}
-          onNavigate={(screen) => setCurrentScreen(screen)}
-          onNewTaskClick={() => setCurrentScreen('create')}
+          onRoleChange={handleRoleChange}
+          onNavigate={(screen) => {
+            if (screen === 'proposals') {
+              setFilterProposalsTaskId('all');
+            }
+            setCurrentScreen(screen);
+          }}
+          tasksCount={tasks.length}
+          proposalsCount={proposals.length}
+          pendingProposalsCount={pendingProposalsCount}
+          myProposalsCount={proposals.length}
         />
 
-        {/* Content Viewport with generous spacing and max width 1320px */}
-        <main className="flex-1 p-8 overflow-y-auto">
-          {currentScreen === 'catalog' && (
-            <CatalogScreen
-              tasks={tasks}
-              userRole={userRole}
-              onOpenTask={handleOpenTask}
-              onEditTask={handleEditTask}
-              onNavigateToCreate={() => setCurrentScreen('create')}
-            />
-          )}
+        {/* 2. Main Content Column with fixed Header and independent workspace */}
+        <div className="flex-1 flex flex-col min-w-0 min-h-0 xl:h-[100dvh] bg-[#F5F6FA] overflow-hidden">
+          {/* Header */}
+          <Header
+            currentScreen={currentScreen}
+            userRole={userRole}
+            activeTaskTitle={activeTask?.title}
+            onNavigate={(screen) => setCurrentScreen(screen)}
+            onNewTaskClick={() => setCurrentScreen('create')}
+          />
 
-          {currentScreen === 'create' && (
-            <CreateTaskScreen
-              onTaskCreated={handleTaskCreated}
-              onCancel={() => setCurrentScreen('catalog')}
-            />
-          )}
-
-          {currentScreen === 'edit' && activeTask && (
-            <EditTaskScreen
-              task={activeTask}
-              onSaveTask={handleSaveTask}
-              onPreviewStudent={() => setCurrentScreen('student')}
-              onBackToCatalog={() => setCurrentScreen('catalog')}
-            />
-          )}
-
-          {currentScreen === 'student' && activeTask && (
-            <StudentTaskScreen
-              task={activeTask}
-              tasks={tasks}
-              onSelectAnotherTask={(t) => setActiveTaskId(t.id)}
-              onSubmitProposal={handleSubmitProposal}
-              onBackToCatalog={() => setCurrentScreen('catalog')}
-              onNavigateToMyProposals={() => setCurrentScreen('my-proposals')}
-            />
-          )}
-
-          {currentScreen === 'proposals' && (
-            <ProposalsScreen
-              proposals={proposals}
-              tasks={tasks}
-              initialFilterTaskId={filterProposalsTaskId}
-              onUpdateProposalStatus={handleUpdateProposalStatus}
-              onNavigateToTask={(taskId) => {
-                setActiveTaskId(taskId);
-                setCurrentScreen('edit');
-              }}
-            />
-          )}
-
-          {currentScreen === 'my-proposals' && (
-            <MyProposalsScreen
-              proposals={proposals}
-              onOpenTask={(taskId) => {
-                const found = tasks.find(t => t.id === taskId);
-                if (found) {
-                  setActiveTaskId(taskId);
+          {/* Work area */}
+          <main className="flex-1 min-h-0 min-w-0 flex flex-col overflow-hidden">
+            {/* Screen 1: Overview (Home) */}
+            {currentScreen === 'overview' && (
+              <OverviewScreen
+                userRole={userRole}
+                tasks={tasks}
+                proposals={proposals}
+                currentTask={activeTask}
+                onNavigateToCatalog={() => setCurrentScreen('catalog')}
+                onNavigateToCreate={() => setCurrentScreen('create')}
+                onNavigateToEdit={(task) => {
+                  setActiveTaskId(task.id);
+                  setCurrentScreen('edit');
+                }}
+                onNavigateToProposals={() => {
+                  setFilterProposalsTaskId('all');
+                  setCurrentScreen('proposals');
+                }}
+                onNavigateToMyProposals={() => setCurrentScreen('my-proposals')}
+                onNavigateToStudentTask={(task) => {
+                  setActiveTaskId(task.id);
                   setCurrentScreen('student');
-                }
-              }}
-              onExploreCatalog={() => setCurrentScreen('catalog')}
-            />
-          )}
+                }}
+                onNavigateToProgress={() => setCurrentScreen('team-progress')}
+              />
+            )}
 
-          {currentScreen === 'team-profile' && (
-            <TeamProfileScreen />
-          )}
-        </main>
+            {/* Screen 2: Catalog */}
+            {currentScreen === 'catalog' && (
+              <CatalogScreen
+                tasks={tasks}
+                userRole={userRole}
+                onOpenTask={handleOpenTask}
+                onEditTask={handleEditTask}
+                onNavigateToCreate={() => setCurrentScreen('create')}
+              />
+            )}
+
+            {/* Screen 3: Create Task */}
+            {currentScreen === 'create' && (
+              <CreateTaskScreen
+                onTaskCreated={handleTaskCreated}
+                onCancel={() => setCurrentScreen('overview')}
+              />
+            )}
+
+            {/* Screen 4: Edit Task Card */}
+            {currentScreen === 'edit' && activeTask && (
+              <EditTaskScreen
+                task={activeTask}
+                onSaveTask={handleSaveTask}
+                onPreviewStudent={() => setCurrentScreen('student')}
+                onBackToCatalog={() => setCurrentScreen('catalog')}
+              />
+            )}
+
+            {/* Screen 5: Student Task View */}
+            {currentScreen === 'student' && activeTask && (
+              <StudentTaskScreen
+                task={activeTask}
+                tasks={tasks}
+                onSelectAnotherTask={(t) => setActiveTaskId(t.id)}
+                onSubmitProposal={handleSubmitProposal}
+                onBackToCatalog={() => setCurrentScreen('catalog')}
+                onNavigateToMyProposals={() => setCurrentScreen('my-proposals')}
+              />
+            )}
+
+            {/* Screen 6: Proposals & Team Selection */}
+            {currentScreen === 'proposals' && (
+              <ProposalsScreen
+                proposals={proposals}
+                tasks={tasks}
+                initialFilterTaskId={filterProposalsTaskId}
+                onUpdateProposalStatus={handleUpdateProposalStatus}
+                onMilestoneConfirmed={handleMilestoneConfirmed}
+                onNavigateToTask={(taskId) => {
+                  setActiveTaskId(taskId);
+                  setCurrentScreen('edit');
+                }}
+              />
+            )}
+
+            {/* Screen 7: Student My Proposals */}
+            {currentScreen === 'my-proposals' && (
+              <MyProposalsScreen
+                proposals={proposals}
+                onMilestoneSubmitted={handleMilestoneSubmitted}
+                onOpenTask={(taskId) => {
+                  const found = tasks.find((t) => t.id === taskId);
+                  if (found) {
+                    setActiveTaskId(taskId);
+                    setCurrentScreen('student');
+                  }
+                }}
+                onExploreCatalog={() => setCurrentScreen('catalog')}
+              />
+            )}
+
+            {/* Screen 8: Team Progress (Requirement 11) */}
+            {currentScreen === 'team-progress' && (
+              <TeamProgressScreen
+                proposals={proposals}
+                onExploreCatalog={() => setCurrentScreen('catalog')}
+                onOpenMyProposals={() => setCurrentScreen('my-proposals')}
+              />
+            )}
+
+            {/* Screen 9: Team Profile */}
+            {currentScreen === 'team-profile' && (
+              <TeamProfileScreen
+                proposals={proposals}
+                onNavigateToProgress={() => setCurrentScreen('team-progress')}
+              />
+            )}
+          </main>
+        </div>
+
+        {/* Welcome Role Selection Modal */}
+        {showWelcomeModal && (
+          <WelcomeModal
+            isOpen={showWelcomeModal}
+            onSelectRole={handleSelectRoleFromWelcome}
+            onClose={() => setShowWelcomeModal(false)}
+          />
+        )}
+
+        {/* Level Up Celebration Modal (Requirement 13) */}
+        {levelUpInfo.isOpen && levelUpInfo.levelInfo && (
+          <LevelUpModal
+            isOpen={levelUpInfo.isOpen}
+            levelInfo={levelUpInfo.levelInfo}
+            onClose={() => setLevelUpInfo({ isOpen: false, levelInfo: null })}
+            onViewProgress={() => {
+              setLevelUpInfo({ isOpen: false, levelInfo: null });
+              setCurrentScreen('team-progress');
+            }}
+          />
+        )}
       </div>
-    </div>
+    </ToastProvider>
   );
 }

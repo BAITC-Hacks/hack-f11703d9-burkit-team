@@ -10,10 +10,24 @@ export type TaskTheme =
   | 'EdTech';
 
 export type ReadinessLevel = 
-  | 'draft'       // 0 - 40
-  | 'basic'       // 41 - 70
-  | 'ready'       // 71 - 85
-  | 'gold';       // 86 - 100
+  | 'draft'       // 0 - 39: Черновик
+  | 'working'     // 40 - 69: Рабочая
+  | 'ready'       // 70 - 89: Готовая
+  | 'priority'    // 90 - 100: Приоритетная
+  | 'basic'       // fallback compatibility
+  | 'gold';       // fallback compatibility
+
+export type MissionStatus = 'not_started' | 'needs_clarification' | 'ready' | 'confirmed';
+
+export interface TaskMission {
+  id: string;
+  title: string;
+  maxScore: number;
+  currentScore: number;
+  status: MissionStatus;
+  field: keyof Task;
+  nextStepText: string;
+}
 
 export interface RatingCriteria {
   id: string;
@@ -29,6 +43,16 @@ export interface RatingBreakdown {
   readinessLevel: ReadinessLevel;
   readinessLabel: string;
   criteria: RatingCriteria[];
+  missions: TaskMission[];
+  wellFilled: string[];
+  canImprove: string[];
+  nextBestStep?: {
+    text: string;
+    field: keyof Task;
+    pointsAdd: number;
+    sampleValue: string;
+    buttonLabel: string;
+  };
   missingFields: string[];
   suggestions: {
     id: string;
@@ -40,6 +64,22 @@ export interface RatingBreakdown {
 }
 
 export type ProposalStatus = 'new' | 'pending' | 'accepted' | 'rejected';
+
+export type MilestoneStatus = 'pending' | 'submitted' | 'confirmed' | 'revision_requested';
+
+export interface ProposalMilestone {
+  id: string;
+  title: string;
+  description: string;
+  deadline: string;
+  points: number;
+  status: MilestoneStatus;
+  proofUrl?: string;
+  submittedAt?: string;
+  feedback?: string;
+}
+
+export type Milestone = ProposalMilestone;
 
 export interface StudentProposal {
   id: string;
@@ -60,6 +100,8 @@ export interface StudentProposal {
   status: ProposalStatus;
   rejectionReason?: string;
   techStack: string[];
+  milestones?: ProposalMilestone[];
+  teamProgressPoints?: number;
 }
 
 export interface Task {
@@ -78,8 +120,8 @@ export interface Task {
   updatedAt: string;
   proposalsCount: number;
   
-  // 10 core fields grouped into 5 logical sections
-  // 1. Задача и контекст
+  // 10 core fields grouped into logical sections
+  // 1. Проблема и потребность
   context: string;
   need: string;
   
@@ -87,10 +129,10 @@ export interface Task {
   targetUsers: string;
   dataProvided: string;
   
-  // 3. Ограничения
+  // 3. Условия и ограничения
   constraints: string;
   
-  // 4. Результат и критерии успеха
+  // 4. Ожидаемый результат и критерии успеха
   expectedResult: string;
   successCriteria: string;
   
@@ -111,16 +153,50 @@ export interface ClarifyingQuestion {
   options: string[];
   selectedOption?: string;
   customAnswer?: string;
+  maxPoints?: number;
+  exampleAnswer?: string;
 }
 
 export type ActiveScreen = 
+  | 'overview'
   | 'catalog'
+  | 'my-tasks'
   | 'create'
   | 'edit'
   | 'student'
   | 'proposals'
   | 'my-proposals'
+  | 'team-progress'
   | 'team-profile';
+
+export type TeamLevelNumber = 1 | 2 | 3 | 4 | 5;
+
+export interface TeamLevelInfo {
+  level: TeamLevelNumber;
+  name: string;
+  minXP: number;
+  nextLevelXP: number | null;
+  nextLevelName: string;
+}
+
+export interface TeamXpEvent {
+  id: string;
+  amount: number;
+  title: string;
+  date: string;
+  taskId: string;
+  taskTitle: string;
+  companyName: string;
+}
+
+export interface TeamAchievement {
+  id: string;
+  title: string;
+  description: string;
+  unlockedAt?: string;
+  isUnlocked: boolean;
+  iconName: string;
+}
 
 export interface StudentProfile {
   teamName: string;
