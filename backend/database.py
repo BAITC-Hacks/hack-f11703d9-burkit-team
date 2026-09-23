@@ -23,6 +23,16 @@ def database_path() -> Path:
 
 def connect() -> sqlite3.Connection:
     """Открывает соединение с включёнными внешними ключами."""
+    url = os.getenv("TURSO_DATABASE_URL")
+    if url:
+        from backend.cloud_database import CloudConnection
+
+        token = os.getenv("TURSO_AUTH_TOKEN")
+        if not token:
+            raise sqlite3.OperationalError("Не задан TURSO_AUTH_TOKEN.")
+        return CloudConnection(url, token)
+    if os.getenv("VERCEL"):
+        raise sqlite3.OperationalError("Для Vercel настройте облачную базу Turso.")
     path = database_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     connection = sqlite3.connect(path)
