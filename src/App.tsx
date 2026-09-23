@@ -84,12 +84,9 @@ export default function App() {
   };
 
   const handleSaveTask = async (updatedTask: Task) => {
-    try {
-      const saved = await api.updateTask(updatedTask.id, updatedTask);
-      setTasks((previous) => previous.map((task) => (task.id === saved.id ? saved : task)));
-    } catch (err: any) {
-      alert(`Ошибка сохранения: ${err.message}`);
-    }
+    setTasks((previous) =>
+      previous.map((task) => (task.id === updatedTask.id ? updatedTask : task)),
+    );
   };
 
   const handleTaskCreated = async (newTask: Task) => {
@@ -99,40 +96,25 @@ export default function App() {
   };
 
   const handleSubmitProposal = async (newProposal: StudentProposal) => {
-    try {
-      const savedProp = await api.createProposal(newProposal.taskId, {
-        teamName: newProposal.teamName,
-        idea: newProposal.idea,
-        sprintPlan: newProposal.sprintPlan,
-        timeline: newProposal.timeline,
-        prototypeUrl: newProposal.prototypeUrl,
-      });
-      setProposals((previous) => [savedProp, ...previous]);
-      setTasks((previous) =>
-        previous.map((task) =>
-          task.id === newProposal.taskId
-            ? { ...task, proposalsCount: task.proposalsCount + 1 }
-            : task,
-        ),
-      );
-    } catch (err: any) {
-      alert(`Ошибка отправки отклика: ${err.message}`);
-    }
+    setProposals((previous) => [newProposal, ...previous]);
+    setTasks((previous) =>
+      previous.map((task) =>
+        task.id === newProposal.taskId
+          ? { ...task, proposalsCount: task.proposalsCount + 1 }
+          : task,
+      ),
+    );
   };
 
   const handleUpdateProposalStatus = async (
     proposalId: string,
     newStatus: ProposalStatus,
   ) => {
-    try {
-      const decision = newStatus === 'accepted' ? 'selected' : 'rejected';
-      const updatedProp = await api.decideProposal(proposalId, decision);
-      setProposals((previous) =>
-        previous.map((proposal) => (proposal.id === proposalId ? updatedProp : proposal)),
-      );
-    } catch (err: any) {
-      alert(`Ошибка обновления статуса: ${err.message}`);
-    }
+    setProposals((previous) =>
+      previous.map((proposal) =>
+        proposal.id === proposalId ? { ...proposal, status: newStatus } : proposal,
+      ),
+    );
   };
 
   const handleMilestoneConfirmed = (proposalId: string, milestoneId: string, points: number) => {

@@ -23,6 +23,7 @@ export interface AsyncState<T = unknown> {
 }
 
 export interface CreateTaskPayload {
+  id?: string;
   title: string;
   theme: TaskTheme;
   company: {
