@@ -8,6 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field, HttpUrl, StringConstraints, f
 Language = Literal["kk", "ru", "en"]
 TaskStatus = Literal["draft", "open", "closed"]
 ProposalStatus = Literal["pending", "selected", "rejected"]
+MilestoneStatus = Literal["pending", "submitted", "confirmed", "revision_requested"]
 ReadinessLevel = Literal["Черновик", "Рабочая", "Готовая", "Приоритетная"]
 QuestionField = Literal[
     "context",
@@ -87,6 +88,48 @@ class ProposalCreate(StrictModel):
 
 class ProposalDecision(StrictModel):
     status: Literal["selected", "rejected"] = Field(examples=["selected"])
+
+
+class MilestoneCreate(StrictModel):
+    title: ShortText = Field(examples=["Первый рабочий прототип"])
+    description: LongText = Field(examples=["Показать основной пользовательский сценарий."])
+    deadline: ShortText = Field(examples=["2026-10-05"])
+
+
+class MilestoneSubmit(StrictModel):
+    result_url: HttpUrl = Field(examples=["https://github.com/example/demo"])
+
+
+class MilestoneRevision(StrictModel):
+    feedback: LongText
+
+
+class MilestoneResponse(BaseModel):
+    id: int
+    proposal_id: int
+    position: int
+    title: str
+    description: str
+    deadline: str
+    points: int
+    status: MilestoneStatus
+    result_url: str | None
+    feedback: str | None
+    created_at: str
+    updated_at: str
+    submitted_at: str | None
+    confirmed_at: str | None
+
+
+class TeamProgressResponse(BaseModel):
+    proposal_id: int
+    team_id: int | None
+    team_name: str
+    total_points: int
+    confirmed_milestones: int
+    total_milestones: int
+    completion_percent: int = Field(ge=0, le=100)
+    milestones: list[MilestoneResponse]
 
 
 class MissingRatingField(BaseModel):

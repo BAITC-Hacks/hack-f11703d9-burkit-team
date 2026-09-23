@@ -90,6 +90,8 @@ def migrate_existing_database(connection: sqlite3.Connection) -> None:
 
 def seed_database(connection: sqlite3.Connection) -> bool:
     """Заполняет базу атомарно, только если все целевые таблицы пусты."""
+    # Milestones and awards are operational data and intentionally do not
+    # participate in deciding whether the demo fixtures have been installed.
     tables = ("tasks", "teams", "proposals")
     if any(
         connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
