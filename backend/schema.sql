@@ -19,15 +19,26 @@ CREATE TABLE IF NOT EXISTS tasks (
         CHECK (status IN ('draft', 'open', 'closed')),
     readiness_score INTEGER NOT NULL DEFAULT 0
         CHECK (readiness_score BETWEEN 0 AND 100),
+    readiness_level TEXT NOT NULL DEFAULT 'Черновик'
+        CHECK (readiness_level IN ('Черновик', 'Рабочая', 'Готовая', 'Приоритетная')),
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     published_at TEXT,
     closed_at TEXT
 );
 
+CREATE TABLE IF NOT EXISTS teams (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL UNIQUE,
+    interests TEXT NOT NULL,
+    skills TEXT NOT NULL,
+    technology TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS proposals (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     task_id INTEGER NOT NULL,
+    team_id INTEGER,
     team_name TEXT NOT NULL,
     idea TEXT NOT NULL,
     plan TEXT NOT NULL,
@@ -37,7 +48,8 @@ CREATE TABLE IF NOT EXISTS proposals (
         CHECK (status IN ('pending', 'selected', 'rejected')),
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
+    FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE,
+    FOREIGN KEY (team_id) REFERENCES teams(id) ON DELETE SET NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_tasks_catalog
