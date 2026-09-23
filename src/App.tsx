@@ -1,7 +1,7 @@
-import React, { useState } from 'react';
-import { INITIAL_TASKS, INITIAL_PROPOSALS } from './data/mockData';
+import React, { useState, useEffect } from 'react';
 import { Task, StudentProposal, ActiveScreen, UserRole, ProposalStatus, TeamLevelInfo } from './types';
-import { calculateTeamProgress, getTeamLevelInfo } from './utils/teamProgress';
+import { api } from './services/api';
+import { calculateTeamProgress } from './utils/teamProgress';
 import { Sidebar } from './components/Sidebar';
 import { Header } from './components/Header';
 import { OverviewScreen } from './components/OverviewScreen';
@@ -20,35 +20,59 @@ import { ToastProvider } from './components/ui/Toast';
 export default function App() {
   const [userRole, setUserRole] = useState<UserRole>('business');
   const [currentScreen, setCurrentScreen] = useState<ActiveScreen>('overview');
-  const [tasks, setTasks] = useState<Task[]>(INITIAL_TASKS);
-  const [proposals, setProposals] = useState<StudentProposal[]>(INITIAL_PROPOSALS);
-  const [activeTaskId, setActiveTaskId] = useState<string>('task-1');
+  const [tasks, setTasks] = useState<Task[]>([]);
+  const [proposals, setProposals] = useState<StudentProposal[]>([]);
+  const [activeTaskId, setActiveTaskId] = useState<string>('');
   const [filterProposalsTaskId, setFilterProposalsTaskId] = useState<string>('all');
-  
-  // Level up modal celebration state
+  const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
   const [levelUpInfo, setLevelUpInfo] = useState<{ isOpen: boolean; levelInfo: TeamLevelInfo | null }>({
     isOpen: false,
     levelInfo: null,
   });
 
-  // Welcome role selection modal: show on first visit if not selected
   const [showWelcomeModal, setShowWelcomeModal] = useState<boolean>(() => {
     return !localStorage.getItem('talap_role_selected');
   });
 
-  const activeTask = tasks.find((t) => t.id === activeTaskId) || tasks[0];
+  const loadData = async () => {
+    try {
+      setIsLoading(true);
+      setErrorMessage(null);
+      const loadedTasks = await api.getTasks();
+      setTasks(loadedTasks);
+      if (loadedTasks.length > 0) {
+        setActiveTaskId(loadedTasks[0].id);
+        const allPropsPromises = loadedTasks.map((task) => api.getProposals(task.id).catch(() => []));
+        const propsResults = await Promise.all(allPropsPromises);
+        setProposals(propsResults.flat());
+      }
+    } catch (err: any) {
+      setErrorMessage(err.message || 'Ошибка соединения с сервером');
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
-  // Role Switch Handler
+  useEffect(() => {
+    loadData();
+  }, []);
+
+  const activeTask = tasks.find((task) => task.id === activeTaskId) || tasks[0];
+
   const handleRoleChange = (newRole: UserRole) => {
     setUserRole(newRole);
     if (newRole === 'business') {
-      if (currentScreen === 'my-proposals' || currentScreen === 'team-profile' || currentScreen === 'team-progress') {
+      if (
+        currentScreen === 'my-proposals' ||
+        currentScreen === 'team-profile' ||
+        currentScreen === 'team-progress'
+      ) {
         setCurrentScreen('overview');
       }
-    } else {
-      if (currentScreen === 'create' || currentScreen === 'edit' || currentScreen === 'proposals') {
-        setCurrentScreen('overview');
-      }
+    } else if (currentScreen === 'create' || currentScreen === 'edit' || currentScreen === 'proposals') {
+      setCurrentScreen('overview');
     }
   };
 
@@ -59,61 +83,74 @@ export default function App() {
     setCurrentScreen('overview');
   };
 
-  // Handler for saving/confirming task updates in EditTaskScreen
-  const handleSaveTask = (updatedTask: Task) => {
-    setTasks((prev) =>
-      prev.map((t) => (t.id === updatedTask.id ? updatedTask : t))
-    );
+  const handleSaveTask = async (updatedTask: Task) => {
+    try {
+      const saved = await api.updateTask(updatedTask.id, updatedTask);
+      setTasks((previous) => previous.map((task) => (task.id === saved.id ? saved : task)));
+    } catch (err: any) {
+      alert(`Ошибка сохранения: ${err.message}`);
+    }
   };
 
-  // Handler for creating a new task from CreateTaskScreen
-  const handleTaskCreated = (newTask: Task) => {
-    setTasks((prev) => [newTask, ...prev]);
+  const handleTaskCreated = async (newTask: Task) => {
+    setTasks((previous) => [newTask, ...previous]);
     setActiveTaskId(newTask.id);
     setCurrentScreen('edit');
   };
 
-  // Handler for submitting student proposal from StudentTaskScreen
-  const handleSubmitProposal = (newProposal: StudentProposal) => {
-    setProposals((prev) => [newProposal, ...prev]);
-    setTasks((prev) =>
-      prev.map((t) =>
-        t.id === newProposal.taskId
-          ? { ...t, proposalsCount: t.proposalsCount + 1 }
-          : t
-      )
-    );
+  const handleSubmitProposal = async (newProposal: StudentProposal) => {
+    try {
+      const savedProp = await api.createProposal(newProposal.taskId, {
+        teamName: newProposal.teamName,
+        idea: newProposal.idea,
+        sprintPlan: newProposal.sprintPlan,
+        timeline: newProposal.timeline,
+        prototypeUrl: newProposal.prototypeUrl,
+      });
+      setProposals((previous) => [savedProp, ...previous]);
+      setTasks((previous) =>
+        previous.map((task) =>
+          task.id === newProposal.taskId
+            ? { ...task, proposalsCount: task.proposalsCount + 1 }
+            : task,
+        ),
+      );
+    } catch (err: any) {
+      alert(`Ошибка отправки отклика: ${err.message}`);
+    }
   };
 
-  // Handler for manual accept/reject in ProposalsScreen
-  const handleUpdateProposalStatus = (
+  const handleUpdateProposalStatus = async (
     proposalId: string,
-    newStatus: ProposalStatus
+    newStatus: ProposalStatus,
   ) => {
-    setProposals((prev) =>
-      prev.map((p) =>
-        p.id === proposalId ? { ...p, status: newStatus } : p
-      )
-    );
+    try {
+      const decision = newStatus === 'accepted' ? 'selected' : 'rejected';
+      const updatedProp = await api.decideProposal(proposalId, decision);
+      setProposals((previous) =>
+        previous.map((proposal) => (proposal.id === proposalId ? updatedProp : proposal)),
+      );
+    } catch (err: any) {
+      alert(`Ошибка обновления статуса: ${err.message}`);
+    }
   };
 
-  // Handler for confirming milestones by business (Requirement 13 & 14)
   const handleMilestoneConfirmed = (proposalId: string, milestoneId: string, points: number) => {
     const oldProgress = calculateTeamProgress(proposals);
     const oldLevel = oldProgress.levelInfo.level;
 
-    const updated = proposals.map((p) => {
-      if (p.id !== proposalId) return p;
-      const updatedMilestones = (p.milestones || []).map((m) => {
-        if (m.id === milestoneId) {
-          return { ...m, status: 'confirmed' as const };
+    const updated = proposals.map((proposal) => {
+      if (proposal.id !== proposalId) return proposal;
+      const updatedMilestones = (proposal.milestones || []).map((milestone) => {
+        if (milestone.id === milestoneId) {
+          return { ...milestone, status: 'confirmed' as const };
         }
-        return m;
+        return milestone;
       });
       return {
-        ...p,
+        ...proposal,
         milestones: updatedMilestones,
-        teamProgressPoints: (p.teamProgressPoints || 0) + points,
+        teamProgressPoints: (proposal.teamProgressPoints || 0) + points,
       };
     });
 
@@ -128,23 +165,21 @@ export default function App() {
     }
   };
 
-  // Handler for student submitting milestone proof
   const handleMilestoneSubmitted = (proposalId: string, milestoneId: string, proofUrl: string) => {
-    setProposals((prev) =>
-      prev.map((p) => {
-        if (p.id !== proposalId) return p;
-        const updatedMilestones = (p.milestones || []).map((m) => {
-          if (m.id === milestoneId) {
-            return { ...m, status: 'submitted' as const, proofUrl };
+    setProposals((previous) =>
+      previous.map((proposal) => {
+        if (proposal.id !== proposalId) return proposal;
+        const updatedMilestones = (proposal.milestones || []).map((milestone) => {
+          if (milestone.id === milestoneId) {
+            return { ...milestone, status: 'submitted' as const, proofUrl };
           }
-          return m;
+          return milestone;
         });
-        return { ...p, milestones: updatedMilestones };
-      })
+        return { ...proposal, milestones: updatedMilestones };
+      }),
     );
   };
 
-  // Switch to specific task in catalog or editor
   const handleOpenTask = (task: Task) => {
     setActiveTaskId(task.id);
     if (userRole === 'business') {
@@ -159,12 +194,39 @@ export default function App() {
     setCurrentScreen('edit');
   };
 
-  const pendingProposalsCount = proposals.filter((p) => p.status === 'new' || p.status === 'pending').length;
+  const pendingProposalsCount = proposals.filter(
+    (proposal) => proposal.status === 'new' || proposal.status === 'pending',
+  ).length;
+
+  if (isLoading) {
+    return (
+      <div className="min-h-screen bg-[#F5F6FA] flex flex-col items-center justify-center">
+        <div className="w-12 h-12 border-4 border-[#7047EB] border-t-transparent rounded-full animate-spin mb-4" />
+        <p className="text-gray-600 font-medium">Загрузка данных TALAP API...</p>
+      </div>
+    );
+  }
+
+  if (errorMessage) {
+    return (
+      <div className="min-h-screen bg-[#F5F6FA] flex flex-col items-center justify-center p-4">
+        <div className="bg-red-50 border border-red-200 text-red-700 p-6 rounded-xl max-w-md text-center">
+          <h3 className="font-bold text-lg mb-2">Ошибка подключения к API</h3>
+          <p className="text-sm mb-4">{errorMessage}</p>
+          <button
+            onClick={loadData}
+            className="px-4 py-2 bg-[#7047EB] text-white rounded-lg hover:bg-opacity-90 font-medium"
+          >
+            Попробовать снова
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <ToastProvider>
       <div className="min-h-screen xl:h-[100dvh] xl:overflow-hidden bg-[#F5F6FA] text-[#17171C] flex flex-col xl:grid xl:grid-cols-[256px_minmax(0,1fr)] font-sans antialiased">
-        {/* 1. Left Sidebar */}
         <Sidebar
           currentScreen={currentScreen}
           userRole={userRole}
@@ -181,9 +243,7 @@ export default function App() {
           myProposalsCount={proposals.length}
         />
 
-        {/* 2. Main Content Column with fixed Header and independent workspace */}
         <div className="flex-1 flex flex-col min-w-0 min-h-0 xl:h-[100dvh] bg-[#F5F6FA] overflow-hidden">
-          {/* Header */}
           <Header
             currentScreen={currentScreen}
             userRole={userRole}
@@ -192,9 +252,7 @@ export default function App() {
             onNewTaskClick={() => setCurrentScreen('create')}
           />
 
-          {/* Work area */}
           <main className="flex-1 min-h-0 min-w-0 flex flex-col overflow-hidden">
-            {/* Screen 1: Overview (Home) */}
             {currentScreen === 'overview' && (
               <OverviewScreen
                 userRole={userRole}
@@ -220,7 +278,6 @@ export default function App() {
               />
             )}
 
-            {/* Screen 2: Catalog */}
             {currentScreen === 'catalog' && (
               <CatalogScreen
                 tasks={tasks}
@@ -231,7 +288,6 @@ export default function App() {
               />
             )}
 
-            {/* Screen 3: Create Task */}
             {currentScreen === 'create' && (
               <CreateTaskScreen
                 onTaskCreated={handleTaskCreated}
@@ -239,7 +295,6 @@ export default function App() {
               />
             )}
 
-            {/* Screen 4: Edit Task Card */}
             {currentScreen === 'edit' && activeTask && (
               <EditTaskScreen
                 task={activeTask}
@@ -249,19 +304,17 @@ export default function App() {
               />
             )}
 
-            {/* Screen 5: Student Task View */}
             {currentScreen === 'student' && activeTask && (
               <StudentTaskScreen
                 task={activeTask}
                 tasks={tasks}
-                onSelectAnotherTask={(t) => setActiveTaskId(t.id)}
+                onSelectAnotherTask={(task) => setActiveTaskId(task.id)}
                 onSubmitProposal={handleSubmitProposal}
                 onBackToCatalog={() => setCurrentScreen('catalog')}
                 onNavigateToMyProposals={() => setCurrentScreen('my-proposals')}
               />
             )}
 
-            {/* Screen 6: Proposals & Team Selection */}
             {currentScreen === 'proposals' && (
               <ProposalsScreen
                 proposals={proposals}
@@ -276,13 +329,12 @@ export default function App() {
               />
             )}
 
-            {/* Screen 7: Student My Proposals */}
             {currentScreen === 'my-proposals' && (
               <MyProposalsScreen
                 proposals={proposals}
                 onMilestoneSubmitted={handleMilestoneSubmitted}
                 onOpenTask={(taskId) => {
-                  const found = tasks.find((t) => t.id === taskId);
+                  const found = tasks.find((task) => task.id === taskId);
                   if (found) {
                     setActiveTaskId(taskId);
                     setCurrentScreen('student');
@@ -292,7 +344,6 @@ export default function App() {
               />
             )}
 
-            {/* Screen 8: Team Progress (Requirement 11) */}
             {currentScreen === 'team-progress' && (
               <TeamProgressScreen
                 proposals={proposals}
@@ -301,7 +352,6 @@ export default function App() {
               />
             )}
 
-            {/* Screen 9: Team Profile */}
             {currentScreen === 'team-profile' && (
               <TeamProfileScreen
                 proposals={proposals}
@@ -311,7 +361,6 @@ export default function App() {
           </main>
         </div>
 
-        {/* Welcome Role Selection Modal */}
         {showWelcomeModal && (
           <WelcomeModal
             isOpen={showWelcomeModal}
@@ -320,7 +369,6 @@ export default function App() {
           />
         )}
 
-        {/* Level Up Celebration Modal (Requirement 13) */}
         {levelUpInfo.isOpen && levelUpInfo.levelInfo && (
           <LevelUpModal
             isOpen={levelUpInfo.isOpen}
