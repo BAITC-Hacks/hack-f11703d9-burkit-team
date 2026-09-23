@@ -9,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from backend.database import connect, fetch_all, fetch_one, initialize_database
 from backend.services.ai_service import AIUnavailableError, generate_questions
+from backend.services.rating import calculate_task_rating
 
 
 ALLOWED_LANGUAGES = {"kk", "ru", "en"}
@@ -74,6 +75,47 @@ def proposal_or_404(proposal_id: int) -> dict[str, Any]:
     return proposal
 
 
+def rating_input(task: dict[str, Any]) -> dict[str, Any]:
+    """Приводит поля backend к формату функции участника 3."""
+    context_need = None
+    if task.get("context") and task.get("need"):
+        context_need = f"{task['context']}\n{task['need']}"
+
+    business_contact = None
+    if task.get("contact") and task.get("interaction_format"):
+        business_contact = f"{task['contact']}\n{task['interaction_format']}"
+
+    return {
+        "context_need": context_need,
+        "data_materials": task.get("data_description"),
+        "expected_result": task.get("expected_result"),
+        "success_criteria": task.get("success_criteria"),
+        "constraints": task.get("constraints"),
+        "target_users": task.get("users"),
+        "business_contact": business_contact,
+    }
+
+
+def calculate_and_save_rating(task_id: int) -> dict[str, Any]:
+    """Считает рейтинг, сохраняет итоговый балл и возвращает расшифровку."""
+    task = task_or_404(task_id)
+    rating = calculate_task_rating(rating_input(task))
+    with connect() as connection:
+        connection.execute(
+            "UPDATE tasks SET readiness_score = ?, updated_at = CURRENT_TIMESTAMP "
+            "WHERE id = ?",
+            (rating["score"], task_id),
+        )
+    return rating
+
+
+def task_with_rating(task_id: int) -> dict[str, Any]:
+    rating = calculate_and_save_rating(task_id)
+    task = task_or_404(task_id)
+    task["rating"] = rating
+    return task
+
+
 @app.get("/", tags=["Сервис"])
 def root() -> dict[str, str]:
     return {"service": "Burkit API", "docs": "/docs", "health": "/api/health"}
@@ -103,7 +145,7 @@ def create_task(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
             (author_name, language, description),
         )
         task_id = cursor.lastrowid
-    return task_or_404(task_id)
+    return task_with_rating(task_id)
 
 
 @app.get("/api/tasks", tags=["Задачи"])
@@ -125,7 +167,7 @@ def list_tasks(
 
 @app.get("/api/tasks/{task_id}", tags=["Задачи"])
 def get_task(task_id: int) -> dict[str, Any]:
-    return task_or_404(task_id)
+    return task_with_rating(task_id)
 
 
 @app.patch("/api/tasks/{task_id}", tags=["Задачи"])
@@ -154,7 +196,7 @@ def update_task(
             f"UPDATE tasks SET {assignments}, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
             (*values, task_id),
         )
-    return task_or_404(task_id)
+    return task_with_rating(task_id)
 
 
 @app.post("/api/tasks/{task_id}/questions", tags=["AI"])
