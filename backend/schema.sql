@@ -52,8 +52,47 @@ CREATE TABLE IF NOT EXISTS proposals (
     FOREIGN KEY (team_id) REFERENCES teams(id) ON DELETE SET NULL
 );
 
+CREATE TABLE IF NOT EXISTS milestones (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    proposal_id INTEGER NOT NULL,
+    position INTEGER NOT NULL CHECK (position > 0),
+    title TEXT NOT NULL,
+    description TEXT NOT NULL,
+    deadline TEXT NOT NULL,
+    points INTEGER NOT NULL CHECK (points > 0),
+    status TEXT NOT NULL DEFAULT 'pending'
+        CHECK (status IN ('pending', 'submitted', 'confirmed', 'revision_requested')),
+    result_url TEXT,
+    feedback TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    submitted_at TEXT,
+    confirmed_at TEXT,
+    FOREIGN KEY (proposal_id) REFERENCES proposals(id) ON DELETE CASCADE,
+    UNIQUE (proposal_id, position)
+);
+
+CREATE TABLE IF NOT EXISTS point_awards (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    milestone_id INTEGER NOT NULL UNIQUE,
+    proposal_id INTEGER NOT NULL,
+    team_id INTEGER,
+    team_name TEXT NOT NULL,
+    points INTEGER NOT NULL CHECK (points > 0),
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (milestone_id) REFERENCES milestones(id) ON DELETE RESTRICT,
+    FOREIGN KEY (proposal_id) REFERENCES proposals(id) ON DELETE CASCADE,
+    FOREIGN KEY (team_id) REFERENCES teams(id) ON DELETE SET NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_tasks_catalog
 ON tasks(status, readiness_score DESC, published_at DESC);
 
 CREATE INDEX IF NOT EXISTS idx_proposals_task
 ON proposals(task_id);
+
+CREATE INDEX IF NOT EXISTS idx_milestones_proposal
+ON milestones(proposal_id, position);
+
+CREATE INDEX IF NOT EXISTS idx_point_awards_team
+ON point_awards(team_id, team_name, created_at DESC);

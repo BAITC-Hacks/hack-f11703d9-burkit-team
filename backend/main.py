@@ -13,6 +13,10 @@ from backend.database import connect, fetch_all, fetch_one, initialize_database
 from backend.schemas import (
     ErrorResponse,
     HealthResponse,
+    MilestoneCreate,
+    MilestoneResponse,
+    MilestoneRevision,
+    MilestoneSubmit,
     ProposalCreate,
     ProposalDecision,
     ProposalResponse,
@@ -23,6 +27,7 @@ from backend.schemas import (
     TaskResponse,
     TaskStatus,
     TaskUpdate,
+    TeamProgressResponse,
     ValidationErrorResponse,
 )
 from backend.services.ai_service import (
@@ -60,6 +65,7 @@ app = FastAPI(
         {"name": "Задачи", "description": "Карточка задачи и её жизненный цикл."},
         {"name": "AI", "description": "Структурированные уточняющие вопросы к задаче."},
         {"name": "Отклики", "description": "Отклики команд и решение автора задачи."},
+        {"name": "Этапы", "description": "Результаты этапов и прогресс выбранной команды."},
     ],
 )
 
@@ -121,6 +127,67 @@ def proposal_or_404(proposal_id: int) -> dict[str, Any]:
     if proposal is None:
         raise HTTPException(status_code=404, detail="Отклик не найден.")
     return proposal
+
+
+def milestone_or_404(milestone_id: int) -> dict[str, Any]:
+    milestone = fetch_one("SELECT * FROM milestones WHERE id = ?", (milestone_id,))
+    if milestone is None:
+        raise HTTPException(status_code=404, detail="Этап не найден.")
+    return milestone
+
+
+def milestone_points(position: int) -> int:
+    """Design-v2: 300 XP за первый этап, 400 за второй, 500 за остальные."""
+    return min(500, 200 + position * 100)
+
+
+def proposal_progress(proposal_id: int) -> dict[str, Any]:
+    proposal = proposal_or_404(proposal_id)
+    if proposal.get("team_id") is not None:
+        milestones = fetch_all(
+            """
+            SELECT milestones.* FROM milestones
+            JOIN proposals ON proposals.id = milestones.proposal_id
+            WHERE proposals.team_id = ?
+            ORDER BY milestones.created_at, milestones.position
+            """,
+            (proposal["team_id"],),
+        )
+        points_row = fetch_one(
+            "SELECT COALESCE(SUM(points), 0) AS total FROM point_awards WHERE team_id = ?",
+            (proposal["team_id"],),
+        )
+    else:
+        # Until authentication supplies stable team ids for new proposals, the
+        # submitted team name is their server-side identity fallback.
+        milestones = fetch_all(
+            """
+            SELECT milestones.* FROM milestones
+            JOIN proposals ON proposals.id = milestones.proposal_id
+            WHERE proposals.team_id IS NULL AND proposals.team_name = ?
+            ORDER BY milestones.created_at, milestones.position
+            """,
+            (proposal["team_name"],),
+        )
+        points_row = fetch_one(
+            """
+            SELECT COALESCE(SUM(points), 0) AS total FROM point_awards
+            WHERE team_id IS NULL AND team_name = ?
+            """,
+            (proposal["team_name"],),
+        )
+    confirmed = sum(item["status"] == "confirmed" for item in milestones)
+    total = len(milestones)
+    return {
+        "proposal_id": proposal_id,
+        "team_id": proposal.get("team_id"),
+        "team_name": proposal["team_name"],
+        "total_points": points_row["total"] if points_row else 0,
+        "confirmed_milestones": confirmed,
+        "total_milestones": total,
+        "completion_percent": round(confirmed * 100 / total) if total else 0,
+        "milestones": milestones,
+    }
 
 
 def calculate_and_save_rating(task_id: int) -> dict[str, Any]:
@@ -400,3 +467,184 @@ def decide_proposal(proposal_id: int, payload: ProposalDecision) -> dict[str, An
             (payload.status, proposal_id),
         )
     return proposal_or_404(proposal_id)
+
+
+@app.post(
+    "/api/proposals/{proposal_id}/milestones",
+    status_code=status.HTTP_201_CREATED,
+    tags=["Этапы"],
+    summary="Добавить этап выбранному отклику",
+    response_model=MilestoneResponse,
+    responses=COMMON_RESPONSES,
+)
+def create_milestone(proposal_id: int, payload: MilestoneCreate) -> dict[str, Any]:
+    proposal = proposal_or_404(proposal_id)
+    if proposal["status"] != "selected":
+        raise HTTPException(
+            status_code=409,
+            detail="Этапы можно добавлять только к выбранному отклику.",
+        )
+
+    with connect() as connection:
+        position = connection.execute(
+            "SELECT COALESCE(MAX(position), 0) + 1 FROM milestones WHERE proposal_id = ?",
+            (proposal_id,),
+        ).fetchone()[0]
+        cursor = connection.execute(
+            """
+            INSERT INTO milestones (
+                proposal_id, position, title, description, deadline, points
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                proposal_id,
+                position,
+                payload.title,
+                payload.description,
+                payload.deadline,
+                milestone_points(position),
+            ),
+        )
+        milestone_id = cursor.lastrowid
+    return milestone_or_404(milestone_id)
+
+
+@app.get(
+    "/api/proposals/{proposal_id}/milestones",
+    tags=["Этапы"],
+    summary="Получить этапы выбранной команды",
+    response_model=list[MilestoneResponse],
+    responses=COMMON_RESPONSES,
+)
+def list_milestones(proposal_id: int) -> list[dict[str, Any]]:
+    proposal_or_404(proposal_id)
+    return fetch_all(
+        "SELECT * FROM milestones WHERE proposal_id = ? ORDER BY position",
+        (proposal_id,),
+    )
+
+
+@app.get(
+    "/api/proposals/{proposal_id}/progress",
+    tags=["Этапы"],
+    summary="Получить серверный прогресс команды",
+    response_model=TeamProgressResponse,
+    responses=COMMON_RESPONSES,
+)
+def get_proposal_progress(proposal_id: int) -> dict[str, Any]:
+    return proposal_progress(proposal_id)
+
+
+@app.post(
+    "/api/milestones/{milestone_id}/submit",
+    tags=["Этапы"],
+    summary="Отправить ссылку на результат этапа",
+    response_model=MilestoneResponse,
+    responses=COMMON_RESPONSES,
+)
+def submit_milestone(milestone_id: int, payload: MilestoneSubmit) -> dict[str, Any]:
+    milestone = milestone_or_404(milestone_id)
+    if milestone["status"] not in {"pending", "revision_requested"}:
+        raise HTTPException(
+            status_code=409,
+            detail="Результат можно отправить только для активного этапа или после запроса доработки.",
+        )
+
+    with connect() as connection:
+        connection.execute(
+            """
+            UPDATE milestones
+            SET result_url = ?, status = 'submitted', feedback = NULL,
+                submitted_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (str(payload.result_url), milestone_id),
+        )
+    return milestone_or_404(milestone_id)
+
+
+@app.post(
+    "/api/milestones/{milestone_id}/revision",
+    tags=["Этапы"],
+    summary="Вернуть результат этапа на доработку",
+    response_model=MilestoneResponse,
+    responses=COMMON_RESPONSES,
+)
+def request_milestone_revision(
+    milestone_id: int,
+    payload: MilestoneRevision,
+) -> dict[str, Any]:
+    milestone = milestone_or_404(milestone_id)
+    if milestone["status"] != "submitted":
+        raise HTTPException(
+            status_code=409,
+            detail="На доработку можно вернуть только отправленный результат.",
+        )
+    with connect() as connection:
+        connection.execute(
+            """
+            UPDATE milestones
+            SET status = 'revision_requested', feedback = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (payload.feedback, milestone_id),
+        )
+    return milestone_or_404(milestone_id)
+
+
+@app.post(
+    "/api/milestones/{milestone_id}/confirm",
+    tags=["Этапы"],
+    summary="Подтвердить результат и атомарно начислить XP",
+    response_model=TeamProgressResponse,
+    responses=COMMON_RESPONSES,
+)
+def confirm_milestone(milestone_id: int) -> dict[str, Any]:
+    milestone = milestone_or_404(milestone_id)
+    proposal_id = milestone["proposal_id"]
+
+    # BEGIN IMMEDIATE serializes competing confirmations in SQLite/libSQL. The
+    # UNIQUE milestone_id in point_awards is the second idempotency boundary.
+    with connect() as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        current = connection.execute(
+            "SELECT * FROM milestones WHERE id = ?",
+            (milestone_id,),
+        ).fetchone()
+        if current["status"] == "confirmed":
+            pass
+        elif current["status"] != "submitted" or not current["result_url"]:
+            raise HTTPException(
+                status_code=409,
+                detail="Сначала команда должна отправить результат этапа.",
+            )
+        else:
+            proposal = connection.execute(
+                "SELECT * FROM proposals WHERE id = ?",
+                (proposal_id,),
+            ).fetchone()
+            connection.execute(
+                """
+                INSERT OR IGNORE INTO point_awards (
+                    milestone_id, proposal_id, team_id, team_name, points
+                ) VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    milestone_id,
+                    proposal_id,
+                    proposal["team_id"],
+                    proposal["team_name"],
+                    current["points"],
+                ),
+            )
+            connection.execute(
+                """
+                UPDATE milestones
+                SET status = 'confirmed', confirmed_at = CURRENT_TIMESTAMP,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = ? AND status = 'submitted'
+                """,
+                (milestone_id,),
+            )
+
+    return proposal_progress(proposal_id)
