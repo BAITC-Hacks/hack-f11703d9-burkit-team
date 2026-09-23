@@ -22,20 +22,27 @@ npm run dev
 
 Требуется Python.
 
+При первом запуске создайте виртуальное окружение:
+
 ```powershell
 py -m venv .venv
+```
+
+Активируйте окружение, установите зависимости и запустите сервер:
+
+```powershell
 .venv\Scripts\Activate.ps1
 pip install -r backend/requirements.txt
 uvicorn backend.main:app --reload
 ```
 
-После запуска доступны:
+После запуска backend доступны:
 
 - API: <http://127.0.0.1:8000>
 - Swagger: <http://127.0.0.1:8000/docs>
 - проверка состояния: <http://127.0.0.1:8000/api/health>
 
-SQLite создаётся автоматически в `backend/data/app.db`.
+База SQLite создаётся автоматически в `backend/data/app.db`.
 
 ## AI-режим
 
