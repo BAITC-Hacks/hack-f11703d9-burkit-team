@@ -1,0 +1,2 @@
+"""Backend проекта Burkit."""
+

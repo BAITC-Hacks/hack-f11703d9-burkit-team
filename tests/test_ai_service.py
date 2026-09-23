@@ -1,0 +1,139 @@
+import json
+import os
+import unittest
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
+
+import httpx
+import openai
+
+from backend.services.ai_service import (
+    AIResponseError,
+    AIUnavailableError,
+    generate_questions,
+    get_ai_runtime_info,
+    openai_timeout_seconds,
+    validate_questions,
+)
+
+
+TASK = {
+    "id": 7,
+    "language": "ru",
+    "description": "Заявки клиентов теряются между разными каналами.",
+    "context": None,
+    "need": None,
+    "users": None,
+    "data_description": None,
+    "constraints": None,
+    "expected_result": None,
+    "success_criteria": None,
+    "contact": None,
+    "interaction_format": None,
+}
+
+
+class AIServiceTests(unittest.TestCase):
+    def test_mock_mode_returns_three_questions(self):
+        with patch.dict(os.environ, {"AI_MODE": "mock"}, clear=True):
+            result = generate_questions(TASK)
+
+        self.assertEqual(result["provider"], "mock")
+        self.assertEqual(len(result["questions"]), 3)
+
+    def test_openai_mode_requires_api_key(self):
+        with patch.dict(os.environ, {"AI_MODE": "openai"}, clear=True):
+            with self.assertRaisesRegex(AIUnavailableError, "OPENAI_API_KEY"):
+                generate_questions(TASK)
+
+    def test_openai_mode_returns_validated_structured_questions(self):
+        response_payload = {
+            "questions": [
+                {"field": "users", "text": "Кто будет пользоваться решением?"},
+                {"field": "constraints", "text": "Какие есть ограничения?"},
+                {
+                    "field": "success_criteria",
+                    "text": "Как будет измеряться результат?",
+                },
+            ]
+        }
+        fake_response = SimpleNamespace(
+            status="completed",
+            output_text=json.dumps(response_payload, ensure_ascii=False),
+            model="gpt-6-luna",
+        )
+        fake_client = MagicMock()
+        fake_client.responses.create.return_value = fake_response
+
+        with patch.dict(
+            os.environ,
+            {
+                "AI_MODE": "openai",
+                "OPENAI_API_KEY": "test-key",
+                "OPENAI_MODEL": "gpt-6-luna",
+            },
+            clear=True,
+        ):
+            with patch("openai.OpenAI", return_value=fake_client):
+                result = generate_questions(TASK)
+
+        self.assertEqual(result["provider"], "openai")
+        self.assertEqual(result["questions"], response_payload["questions"])
+        request = fake_client.responses.create.call_args.kwargs
+        self.assertFalse(request["store"])
+        self.assertTrue(request["text"]["format"]["strict"])
+
+    def test_duplicate_question_fields_are_rejected(self):
+        payload = {
+            "questions": [
+                {"field": "users", "text": "Первый вопрос"},
+                {"field": "users", "text": "Повторный вопрос"},
+                {"field": "constraints", "text": "Третий вопрос"},
+            ]
+        }
+
+        with self.assertRaisesRegex(AIResponseError, "одного поля"):
+            validate_questions(payload)
+
+    def test_timeout_returns_retryable_error_without_exposing_secret(self):
+        fake_client = MagicMock()
+        fake_client.responses.create.side_effect = openai.APITimeoutError(
+            request=httpx.Request("POST", "https://api.openai.com/v1/responses")
+        )
+
+        with patch.dict(
+            os.environ,
+            {"AI_MODE": "openai", "OPENAI_API_KEY": "secret-test-key"},
+            clear=True,
+        ):
+            with patch("openai.OpenAI", return_value=fake_client):
+                with self.assertRaises(AIUnavailableError) as raised:
+                    generate_questions(TASK)
+
+        message = str(raised.exception)
+        self.assertIn("Черновик сохранён", message)
+        self.assertIn("повторите запрос", message)
+        self.assertNotIn("secret-test-key", message)
+
+    def test_runtime_info_never_contains_api_key(self):
+        with patch.dict(
+            os.environ,
+            {
+                "AI_MODE": "openai",
+                "OPENAI_API_KEY": "secret-test-key",
+                "OPENAI_MODEL": "gpt-5-mini",
+            },
+            clear=True,
+        ):
+            info = get_ai_runtime_info()
+
+        self.assertEqual(info, {"mode": "openai", "ready": True, "model": "gpt-5-mini"})
+        self.assertNotIn("secret-test-key", repr(info))
+
+    def test_invalid_timeout_uses_safe_default(self):
+        with patch.dict(os.environ, {"OPENAI_TIMEOUT_SECONDS": "zero"}, clear=True):
+            self.assertEqual(openai_timeout_seconds(), 20.0)
+
+
+if __name__ == "__main__":
+    unittest.main()

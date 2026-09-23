@@ -1,0 +1,105 @@
+@import "tailwindcss";
+
+@layer base {
+  body {
+    font-family: 'Manrope', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background-color: #F4F6FA;
+    color: #17171C;
+    overflow-x: hidden;
+  }
+
+  @media (min-width: 1200px) {
+    body {
+      overflow: hidden;
+      height: 100dvh;
+    }
+  }
+}
+
+/* Custom scrollbars according to specification */
+.custom-scrollbar::-webkit-scrollbar,
+::-webkit-scrollbar {
+  width: 7px;
+  height: 7px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-track,
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb,
+::-webkit-scrollbar-thumb {
+  background: #C9C3E8;
+  border-radius: 999px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb:hover,
+::-webkit-scrollbar-thumb:hover {
+  background: #8B72EE;
+}
+
+/* Scroll area edge shadows indicator */
+.scroll-shadow-mask {
+  mask-image: linear-gradient(to bottom, black calc(100% - 24px), transparent 100%);
+}
+
+/* Subtle dot background for modern desktop feel */
+.bg-grid-pattern {
+  background-image: radial-gradient(rgba(112, 71, 235, 0.07) 1px, transparent 1px);
+  background-size: 24px 24px;
+}
+
+/* XP Progress Bar Animations */
+@keyframes xp-shimmer-sweep {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(250%);
+  }
+}
+
+@keyframes xp-glow-pulse {
+  0%, 100% {
+    filter: drop-shadow(0 0 2px rgba(112, 71, 235, 0.3));
+  }
+  50% {
+    filter: drop-shadow(0 0 8px rgba(44, 199, 181, 0.6)) drop-shadow(0 0 12px rgba(112, 71, 235, 0.4));
+  }
+}
+
+@keyframes xp-badge-bounce {
+  0%, 100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.08);
+  }
+}
+
+.xp-progress-bar-fill {
+  transition: width 1.2s cubic-bezier(0.22, 1, 0.36, 1);
+  will-change: width;
+}
+
+.xp-shimmer-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0.45) 50%,
+    transparent 100%
+  );
+  animation: xp-shimmer-sweep 2.4s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+  pointer-events: none;
+}
+
+.xp-pulse-glow {
+  animation: xp-glow-pulse 3s ease-in-out infinite;
+}
+
