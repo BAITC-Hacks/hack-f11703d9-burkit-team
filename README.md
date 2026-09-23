@@ -7,7 +7,7 @@
 - frontend на React;
 - backend на FastAPI;
 - базы данных SQLite;
-- AI-модуля для генерации уточняющих вопросов.
+- OpenAI-модуля для генерации уточняющих вопросов.
 
 ## Запуск frontend
 
@@ -21,6 +21,14 @@ npm run dev
 ## Запуск backend
 
 Требуется Python.
+
+При первом запуске создайте виртуальное окружение:
+
+```powershell
+py -m venv .venv
+```
+
+Активируйте окружение, установите зависимости и запустите сервер:
 
 ```powershell
 .venv\Scripts\Activate.ps1
@@ -36,20 +44,40 @@ uvicorn backend.main:app --reload
 
 База SQLite создаётся автоматически в `backend/data/app.db`.
 
-## Основной сценарий API
-
-1. `POST /api/tasks` — создать черновик.
-2. `POST /api/tasks/{id}/questions` — получить уточняющие вопросы.
-3. `PATCH /api/tasks/{id}` — изменить карточку.
-4. `POST /api/tasks/{id}/publish` — опубликовать задачу.
-5. `GET /api/tasks?status=open` — получить каталог.
-6. `POST /api/tasks/{id}/proposals` — отправить отклик.
-7. `GET /api/tasks/{id}/proposals` — получить отклики.
-8. `PATCH /api/proposals/{id}/decision` — выбрать или отклонить отклик.
-9. `POST /api/tasks/{id}/close` — закрыть задачу.
-
 ## AI-режим
 
-Сейчас backend использует режим `mock` и возвращает тестовые уточняющие вопросы. Подключение реального AI API выполняется отдельно.
+По умолчанию используется тестовый режим:
 
-API-ключ должен храниться только на backend и не должен попадать во frontend или Git.
+```powershell
+$env:AI_MODE = "mock"
+```
+
+Для вызова OpenAI:
+
+```powershell
+$env:AI_MODE = "openai"
+$env:OPENAI_API_KEY = "ваш-ключ"
+$env:OPENAI_MODEL = "gpt-6-luna"
+
+uvicorn backend.main:app --reload
+```
+
+Ключ хранится только в переменных окружения и не добавляется в Git.
+
+## Основной API
+
+- `POST /api/tasks` — создать черновик;
+- `POST /api/tasks/{id}/questions` — получить уточняющие вопросы;
+- `PATCH /api/tasks/{id}` — изменить карточку и пересчитать рейтинг;
+- `POST /api/tasks/{id}/publish` — опубликовать задачу;
+- `GET /api/tasks?status=open` — получить каталог;
+- `POST /api/tasks/{id}/proposals` — отправить отклик;
+- `GET /api/tasks/{id}/proposals` — получить отклики;
+- `PATCH /api/proposals/{id}/decision` — выбрать или отклонить отклик;
+- `POST /api/tasks/{id}/close` — закрыть задачу.
+
+## Проверка backend
+
+```powershell
+python -m unittest discover -s tests -v
+```
