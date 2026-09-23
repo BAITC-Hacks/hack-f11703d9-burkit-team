@@ -1,0 +1,6 @@
+{
+  "name": "TALAP — HackAlem AI",
+  "description": "Платформа практических задач для студентов от бизнеса с AI-анализом, рейтингом готовности и откликами команд.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
