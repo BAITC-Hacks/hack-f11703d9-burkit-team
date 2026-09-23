@@ -1,12 +1,12 @@
 import React, { useState } from 'react';
 import { Task, StudentProposal } from '../types';
+import { talapApi } from '../api/talapApi';
+import { useAsyncAction } from '../utils/useAsyncAction';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
-  Building2, 
   Send, 
   ArrowLeft,
   ArrowRight,
-  Check, 
   Copy,
   Sparkles,
   Database,
@@ -15,10 +15,14 @@ import {
   Clock,
   AlertCircle,
   Award,
-  CheckCircle2,
-  Users
+  Loader2,
+  AlertTriangle,
+  Building2,
+  FileCheck,
+  CheckCircle2
 } from 'lucide-react';
 import { useToast } from './ui/Toast';
+import { CollapsibleCard } from './ui/CollapsibleCard';
 
 interface StudentTaskScreenProps {
   task: Task;
@@ -42,18 +46,15 @@ export const StudentTaskScreen: React.FC<StudentTaskScreenProps> = ({
   const [proposalStep, setProposalStep] = useState<1 | 2 | 3>(1);
 
   // Proposal form state
-  // Step 1: Данные команды
   const [teamName, setTeamName] = useState('VisionCraft KBTU');
   const [university, setUniversity] = useState('КБТУ (Казахстанско-Британский технический университет)');
   const [captainContact, setCaptainContact] = useState('@sanzhar_cv_craft | s_mukhtarov@kbtu.kz');
   const [skills, setSkills] = useState('Python, PyTorch, FastAPI, Docker, React');
-
-  // Step 2: Идея решения
   const [idea, setIdea] = useState(
-    'Двухуровневый ансамбль: быстрый легковесный детектор зон повреждений для фильтрации бликов + специализированная квантованная модель для запуска на CPU со скоростью до 250 мс.'
+    'Двухуровневый ансамбль: быстрый детектор зон повреждений для фильтрации бликов + квантованная модель для запуска на CPU со скоростью до 250 мс.'
   );
   const [firstMilestone, setFirstMilestone] = useState(
-    'EDA предоставленных данных, очистка разметки и базовый прототип инференса модели на 100 тестовых примерах.'
+    'EDA данных, очистка разметки и прототип инференса модели на 100 тестовых примерах.'
   );
   const [timelineWeeks, setTimelineWeeks] = useState('3-4 недели');
 
@@ -71,64 +72,55 @@ export const StudentTaskScreen: React.FC<StudentTaskScreenProps> = ({
     setIsModalOpen(true);
   };
 
-  const handleSubmitProposal = () => {
-    const newProposal: StudentProposal = {
-      id: `prop-${Date.now()}`,
-      taskId: task.id,
-      taskTitle: task.title,
-      companyName: task.company.name,
-      teamName: teamName.trim(),
-      university: university.trim(),
-      captain: 'Санжар Мухтаров',
-      captainEmail: captainContact.includes('@') ? captainContact.split('|')[1]?.trim() || captainContact : 'team@univ.kz',
-      captainTelegram: captainContact.startsWith('@') ? captainContact.split('|')[0]?.trim() || captainContact : '@student_lead',
-      membersCount: 4,
-      techStack: skills.split(',').map(s => s.trim()),
-      idea: idea.trim(),
-      sprintPlan: `• Этап 1: ${firstMilestone}\n• Этап 2: Достижение целевых метрик точности и оптимизация инференса.\n• Этап 3: Финальный Docker-контейнер и веб-интерфейс для бизнеса.`,
-      timeline: timelineWeeks.trim(),
-      prototypeUrl: 'https://github.com/visioncraft-kbtu/demo',
-      submittedAt: 'Только что',
-      status: 'new',
-      teamProgressPoints: 0,
-      milestones: [
-        {
-          id: `m-${Date.now()}-1`,
-          title: 'Этап 1: Первый рабочий результат',
-          description: firstMilestone,
-          deadline: 'Через 10 дней',
-          points: 300,
-          status: 'pending'
-        },
-        {
-          id: `m-${Date.now()}-2`,
-          title: 'Этап 2: Оптимизация решения и проверка метрик',
-          description: 'Достижение заявленных критериев приёмки бизнеса',
-          deadline: 'Через 20 дней',
-          points: 400,
-          status: 'pending'
-        },
-        {
-          id: `m-${Date.now()}-3`,
-          title: 'Этап 3: Демонстрационный прототип и сдача пилота',
-          description: 'Финальная демонстрация представителю компании',
-          deadline: 'Через 30 дней',
-          points: 500,
-          status: 'pending'
-        }
-      ]
-    };
+  // Async action for proposal submission
+  const submitProposalAction = useAsyncAction(
+    async () => {
+      const email = captainContact.includes('@')
+        ? captainContact.split('|')[1]?.trim() || captainContact
+        : 'team@univ.kz';
+      const telegram = captainContact.startsWith('@')
+        ? captainContact.split('|')[0]?.trim() || captainContact
+        : '@student_lead';
 
-    onSubmitProposal(newProposal);
-    setIsModalOpen(false);
-    showToast('Предложение отправлено бизнесу! Вы можете отслеживать его статус в «Мои отклики».', 'success');
-    if (onNavigateToMyProposals) {
-      onNavigateToMyProposals();
+      return talapApi.submitProposal({
+        taskId: task.id,
+        taskTitle: task.title,
+        companyName: task.company.name,
+        teamName: teamName.trim(),
+        university: university.trim(),
+        captain: 'Санжар Мухтаров',
+        captainEmail: email,
+        captainTelegram: telegram,
+        membersCount: 4,
+        techStack: skills.split(',').map((s) => s.trim()),
+        idea: idea.trim(),
+        firstMilestone: firstMilestone.trim(),
+        timeline: timelineWeeks.trim(),
+        prototypeUrl: 'https://github.com/visioncraft-kbtu/demo',
+      });
+    },
+    {
+      onSuccess: (newProposal) => {
+        onSubmitProposal(newProposal);
+        setIsModalOpen(false);
+        showToast('Предложение успешно отправлено бизнесу!', 'success');
+        if (onNavigateToMyProposals) {
+          onNavigateToMyProposals();
+        }
+      },
+      onError: (errMsg) => {
+        showToast(`Ошибка отправки: ${errMsg}`, 'error');
+      },
     }
+  );
+
+  const handleSubmitProposal = () => {
+    if (submitProposalAction.isLoading) return;
+    submitProposalAction.execute();
   };
 
   return (
-    <div className="h-full flex flex-col min-h-0 space-y-4 max-w-[1080px] mx-auto w-full overflow-y-auto pr-1">
+    <div className="h-full flex flex-col min-h-0 space-y-5 max-w-[1080px] mx-auto w-full overflow-y-auto pb-8 pr-1">
       {/* 1. Header with Breadcrumb */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-[#E2E5EE] shrink-0">
         <div className="space-y-1">
@@ -152,114 +144,146 @@ export const StudentTaskScreen: React.FC<StudentTaskScreenProps> = ({
 
         <div className="flex items-center gap-2 shrink-0">
           <span className="text-xs font-bold px-3 py-1 rounded-xl bg-[#F0ECFF] text-[#7047EB] border border-[#7047EB]/20">
-            Готовность: {task.rating.totalScore} из 100 б. ({task.rating.readinessLabel})
+            Готовность: {Math.min(100, Math.max(0, task.rating.totalScore))} из 100 б.
           </span>
         </div>
       </div>
 
-      {/* 2. Four Key Structured Blocks (Requirement 11) */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        {/* Block 1: Суть проблемы */}
-        <div className="p-5 bg-white rounded-2xl border border-[#E2E5EE] shadow-xs space-y-2.5">
-          <div className="flex items-center gap-2 text-xs font-black text-[#7047EB] uppercase tracking-wider">
-            <Sparkles className="w-4 h-4" />
-            <span>Суть проблемы</span>
+      {/* 2. Top Summary Card */}
+      <div className="p-5 sm:p-6 bg-white rounded-2xl border border-[#E2E5EE] shadow-xs space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-[#F0F2F7]">
+          <div className="flex items-center gap-2">
+            <Building2 className="w-4 h-4 text-[#7047EB]" />
+            <span className="text-xs font-bold text-[#17171C]">{task.company.name}</span>
+            <span className="text-[#CBD5E1]">•</span>
+            <span className="text-xs text-[#667085]">{task.theme}</span>
           </div>
-          <p className="text-xs text-[#17171C] font-semibold leading-relaxed">
+          <div className="flex items-center gap-3 text-xs font-semibold text-[#667085]">
+            <span className="flex items-center gap-1">
+              <Clock className="w-3.5 h-3.5 text-[#D97706]" />
+              Спринт: ~3-4 недели
+            </span>
+            <span className="flex items-center gap-1 text-[#149A8B] font-bold">
+              <Award className="w-3.5 h-3.5" />
+              До +1050 XP
+            </span>
+          </div>
+        </div>
+
+        <div className="space-y-2">
+          <div className="text-[11px] font-black uppercase tracking-wider text-[#7047EB]">
+            Суть вызова
+          </div>
+          <p className="text-xs sm:text-sm text-[#17171C] font-semibold leading-relaxed">
             {task.need || task.context}
           </p>
           {task.targetUsers && (
-            <div className="text-[11px] text-[#667085] pt-2 border-t border-[#F0F2F7]">
-              <span className="font-bold text-[#17171C]">Кто пользователи: </span>
-              {task.targetUsers}
-            </div>
-          )}
-        </div>
-
-        {/* Block 2: Доступные данные */}
-        <div className="p-5 bg-white rounded-2xl border border-[#E2E5EE] shadow-xs space-y-2.5">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2 text-xs font-black text-[#149A8B] uppercase tracking-wider">
-              <Database className="w-4 h-4" />
-              <span>Доступные данные</span>
-            </div>
-            <button
-              type="button"
-              onClick={handleCopyData}
-              className="text-[11px] font-bold text-[#149A8B] hover:underline flex items-center gap-1 cursor-pointer"
-            >
-              <Copy className="w-3 h-3" />
-              <span>{copiedData ? 'Скопировано!' : 'Скопировать'}</span>
-            </button>
-          </div>
-          <p className="text-xs text-[#17171C] font-medium leading-relaxed whitespace-pre-line bg-[#F8F9FD] p-3 rounded-xl border border-[#E2E5EE]">
-            {task.dataProvided || 'Формат данных будет передан утверждённой команде.'}
-          </p>
-        </div>
-
-        {/* Block 3: Ожидаемый результат */}
-        <div className="p-5 bg-white rounded-2xl border border-[#E2E5EE] shadow-xs space-y-2.5">
-          <div className="flex items-center gap-2 text-xs font-black text-[#D97706] uppercase tracking-wider">
-            <Layers className="w-4 h-4" />
-            <span>Ожидаемый результат</span>
-          </div>
-          <p className="text-xs text-[#17171C] font-medium leading-relaxed whitespace-pre-line">
-            {task.expectedResult || 'Работающий прототип с инструкцией запуска.'}
-          </p>
-          {task.successCriteria && (
-            <div className="text-[11px] text-[#667085] pt-2 border-t border-[#F0F2F7]">
-              <span className="font-bold text-[#17171C]">Критерии успеха: </span>
-              {task.successCriteria}
-            </div>
-          )}
-        </div>
-
-        {/* Block 4: Формат связи с бизнесом */}
-        <div className="p-5 bg-white rounded-2xl border border-[#E2E5EE] shadow-xs space-y-2.5">
-          <div className="flex items-center gap-2 text-xs font-black text-[#7047EB] uppercase tracking-wider">
-            <PhoneCall className="w-4 h-4" />
-            <span>Формат связи с бизнесом</span>
-          </div>
-          <div className="space-y-1 text-xs text-[#17171C]">
-            <p className="font-medium">
-              {task.interactionFormat || 'Еженедельный созвон на 30 минут + чат в Telegram.'}
+            <p className="text-xs text-[#667085]">
+              <strong className="text-[#17171C]">Целевая аудитория:</strong> {task.targetUsers}
             </p>
-            <p className="text-[#667085] text-[11px]">
-              <span className="font-bold text-[#17171C]">Представитель: </span>
-              {task.contact || task.company.repName}
-            </p>
-          </div>
-          {task.constraints && (
-            <div className="text-[11px] text-[#667085] pt-2 border-t border-[#F0F2F7]">
-              <span className="font-bold text-[#17171C]">Условия: </span>
-              {task.constraints}
-            </div>
           )}
         </div>
       </div>
 
-      {/* 3. Action Prompt Bar: Готовы взяться за решение? */}
-      <div className="p-6 bg-gradient-to-r from-[#7047EB] to-[#5527D6] rounded-2xl text-white shadow-lg flex flex-col sm:flex-row items-center justify-between gap-4">
+      {/* 3. Collapsible Structured Blocks for Details */}
+      <div className="space-y-3">
+        {/* Block 1: Ожидаемый результат и приёмка */}
+        <CollapsibleCard
+          title="Что нужно сделать и критерии приёмки"
+          subtitle="Формат сдачи и технические требования"
+          icon={<FileCheck className="w-4 h-4" />}
+          defaultOpen={true}
+        >
+          <div className="space-y-3 text-xs text-[#17171C]">
+            <div className="space-y-1">
+              <span className="font-bold text-[#667085] text-[11px] uppercase tracking-wider">Ожидаемый результат:</span>
+              <p className="font-medium leading-relaxed">
+                {task.expectedResult || 'Работающий прототип с исходным кодом и инструкцией развёртывания.'}
+              </p>
+            </div>
+
+            {task.successCriteria && (
+              <div className="p-3 bg-[#FAF8FF] border border-[#7047EB]/15 rounded-xl space-y-1">
+                <span className="font-bold text-[#7047EB] text-[11px] uppercase tracking-wider">Критерии успеха:</span>
+                <p className="text-xs text-[#17171C] leading-relaxed">{task.successCriteria}</p>
+              </div>
+            )}
+          </div>
+        </CollapsibleCard>
+
+        {/* Block 2: Доступные данные и материалы */}
+        <CollapsibleCard
+          title="Доступные данные и материалы"
+          subtitle="Датасеты, схемы и примеры"
+          icon={<Database className="w-4 h-4" />}
+          defaultOpen={false}
+          badge={
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                handleCopyData();
+              }}
+              className="text-[11px] font-bold text-[#149A8B] hover:underline flex items-center gap-1 cursor-pointer bg-[#E8FAF7] px-2 py-0.5 rounded-md border border-[#2CC7B5]/30"
+            >
+              <Copy className="w-3 h-3" />
+              <span>{copiedData ? 'Скопировано!' : 'Скопировать'}</span>
+            </button>
+          }
+        >
+          <div className="space-y-2 text-xs">
+            <p className="text-[#17171C] font-medium leading-relaxed whitespace-pre-line bg-[#F8F9FD] p-3 rounded-xl border border-[#E2E5EE]">
+              {task.dataProvided || 'Формат данных и тестовые выборки будут переданы утверждённой команде.'}
+            </p>
+          </div>
+        </CollapsibleCard>
+
+        {/* Block 3: Связь и поддержка бизнеса */}
+        <CollapsibleCard
+          title="Формат связи и менторство"
+          subtitle="Регулярность синхронизаций и контакты"
+          icon={<PhoneCall className="w-4 h-4" />}
+          defaultOpen={false}
+        >
+          <div className="space-y-2 text-xs text-[#17171C]">
+            <p className="font-medium">
+              {task.interactionFormat || 'Регулярные синхронизации по спринтам + оперативный чат с ментором.'}
+            </p>
+            <div className="text-[#667085] text-xs pt-2 border-t border-[#F0F2F7]">
+              <span className="font-bold text-[#17171C]">Представитель компании: </span>
+              {task.contact || task.company.repName}
+            </div>
+            {task.constraints && (
+              <div className="p-2.5 bg-[#FFF8E7] border border-[#FFC44D]/40 rounded-xl text-xs text-[#92400E]">
+                <strong className="font-bold">Ограничения: </strong>{task.constraints}
+              </div>
+            )}
+          </div>
+        </CollapsibleCard>
+      </div>
+
+      {/* 4. Action Banner / Sticky Prompt */}
+      <div className="p-5 sm:p-6 bg-gradient-to-r from-[#7047EB] to-[#5527D6] rounded-2xl text-white shadow-md flex flex-col sm:flex-row items-center justify-between gap-4">
         <div className="space-y-1 text-center sm:text-left">
-          <h3 className="text-lg font-black tracking-tight">
-            Готовы взяться за решение?
+          <h3 className="text-base sm:text-lg font-black tracking-tight">
+            Готовы предложить решение?
           </h3>
           <p className="text-xs text-white/80 max-w-md">
-            Предложите вашу идею и план первого этапа. Заполнение займёт не более 3 минут.
+            Отправьте идею и первый этап. Заполнение занимает до 3 минут.
           </p>
         </div>
 
         <button
           type="button"
           onClick={handleOpenProposal}
-          className="h-12 px-7 bg-[#2CC7B5] hover:bg-[#20AE9D] text-white text-xs font-black rounded-xl transition-all flex items-center gap-2 cursor-pointer shadow-md shrink-0"
+          className="h-11 px-6 bg-[#2CC7B5] hover:bg-[#20AE9D] text-white text-xs font-black rounded-xl transition-all flex items-center gap-2 cursor-pointer shadow-md shrink-0"
         >
-          <span>Предложить решение</span>
+          <span>Откликнуться на задачу</span>
           <ArrowRight className="w-4 h-4 stroke-[3]" />
         </button>
       </div>
 
-      {/* 4. Three-Step Proposal Modal (Requirement 12) */}
+      {/* 5. Three-Step Proposal Modal */}
       <AnimatePresence>
         {isModalOpen && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
@@ -320,20 +344,20 @@ export const StudentTaskScreen: React.FC<StudentTaskScreenProps> = ({
 
                   <div className="space-y-1.5">
                     <label className="font-bold text-[#17171C] block">
-                      Контакт капитана (Telegram / Email)
+                      Контакты капитана (Telegram / Email)
                     </label>
                     <input
                       type="text"
                       value={captainContact}
                       onChange={(e) => setCaptainContact(e.target.value)}
-                      placeholder="@telegram_handle | email@domain.kz"
+                      placeholder="@telegram | email@domain.kz"
                       className="w-full h-11 px-4 rounded-xl border border-[#E2E5EE] bg-[#F8F9FD] focus:bg-white focus:border-[#7047EB] text-xs text-[#17171C] font-medium outline-none"
                     />
                   </div>
 
                   <div className="space-y-1.5">
                     <label className="font-bold text-[#17171C] block">
-                      Коротко о навыках команды
+                      Стек технологий
                     </label>
                     <input
                       type="text"
@@ -351,33 +375,33 @@ export const StudentTaskScreen: React.FC<StudentTaskScreenProps> = ({
                 <div className="space-y-4 text-xs">
                   <div className="space-y-1.5">
                     <label className="font-bold text-[#17171C] block">
-                      Как вы планируете решить задачу?
+                      Идея архитектуры и подхода
                     </label>
                     <textarea
                       rows={3}
                       value={idea}
                       onChange={(e) => setIdea(e.target.value)}
-                      placeholder="Опишите подход простыми словами: какие модели или алгоритмы будете использовать."
-                      className="w-full p-3.5 rounded-xl border border-[#E2E5EE] bg-[#F8F9FD] focus:bg-white focus:border-[#7047EB] text-xs text-[#17171C] font-medium outline-none leading-relaxed resize-none"
+                      placeholder="Опишите предлагаемый метод и алгоритмы..."
+                      className="w-full p-3 rounded-xl border border-[#E2E5EE] bg-[#F8F9FD] focus:bg-white focus:border-[#7047EB] text-xs text-[#17171C] outline-none leading-relaxed"
                     />
                   </div>
 
                   <div className="space-y-1.5">
                     <label className="font-bold text-[#17171C] block">
-                      Какой результат покажете на первом этапе?
+                      Что сдадите на 1-м спринте?
                     </label>
                     <textarea
                       rows={2}
                       value={firstMilestone}
                       onChange={(e) => setFirstMilestone(e.target.value)}
-                      placeholder="Например: Проверка данных, базовый прототип на 100 тестовых примерах."
-                      className="w-full p-3 rounded-xl border border-[#E2E5EE] bg-[#F8F9FD] focus:bg-white focus:border-[#7047EB] text-xs text-[#17171C] font-medium outline-none leading-relaxed resize-none"
+                      placeholder="Например: EDA, очистка данных и базовый инференс..."
+                      className="w-full p-3 rounded-xl border border-[#E2E5EE] bg-[#F8F9FD] focus:bg-white focus:border-[#7047EB] text-xs text-[#17171C] outline-none leading-relaxed"
                     />
                   </div>
 
                   <div className="space-y-1.5">
                     <label className="font-bold text-[#17171C] block">
-                      Срок выполнения
+                      Ожидаемый срок реализации
                     </label>
                     <input
                       type="text"
@@ -395,8 +419,8 @@ export const StudentTaskScreen: React.FC<StudentTaskScreenProps> = ({
                 <div className="space-y-4 text-xs">
                   <div className="p-4 bg-[#F8F9FD] rounded-2xl border border-[#E2E5EE] space-y-2.5">
                     <div className="flex items-center justify-between">
-                      <span className="font-bold text-[#17171C] text-sm">{teamName}</span>
-                      <span className="text-[#667085]">{university}</span>
+                      <span className="font-black text-[#17171C] text-sm">{teamName}</span>
+                      <span className="text-[11px] text-[#667085]">{university}</span>
                     </div>
 
                     <div className="space-y-1 pt-1 border-t border-[#E2E5EE]">
@@ -415,11 +439,27 @@ export const StudentTaskScreen: React.FC<StudentTaskScreenProps> = ({
                     </div>
                   </div>
 
-                  {/* Warning message required by prompt */}
-                  <div className="p-3.5 bg-[#FFF8E7] rounded-xl border border-[#FFC44D]/50 text-[#92400E] flex items-start gap-2.5">
+                  {/* Error display if submission fails */}
+                  {submitProposalAction.isError && (
+                    <div className="p-3 bg-[#FFF0F0] border border-[#FF6266]/30 rounded-xl flex items-center justify-between gap-2 text-xs text-[#DC2626]">
+                      <div className="flex items-center gap-1.5 font-medium">
+                        <AlertTriangle className="w-4 h-4 shrink-0" />
+                        <span>{submitProposalAction.error || 'Ошибка отправки предложения'}</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={submitProposalAction.retry}
+                        className="px-2.5 py-1 bg-[#FF6266] text-white font-bold rounded-lg hover:bg-[#E5484D] text-[11px] cursor-pointer"
+                      >
+                        Повторить
+                      </button>
+                    </div>
+                  )}
+
+                  <div className="p-3 bg-[#FFF8E7] rounded-xl border border-[#FFC44D]/50 text-[#92400E] flex items-start gap-2.5">
                     <AlertCircle className="w-4 h-4 shrink-0 text-[#D97706] mt-0.5" />
                     <span className="text-[11px] leading-relaxed font-medium">
-                      Предложение нельзя будет отредактировать после отправки, но вы сможете дополнять этапы.
+                      Предложение будет направлено представителю бизнеса для рассмотрения.
                     </span>
                   </div>
                 </div>
@@ -430,16 +470,18 @@ export const StudentTaskScreen: React.FC<StudentTaskScreenProps> = ({
                 {proposalStep > 1 ? (
                   <button
                     type="button"
+                    disabled={submitProposalAction.isLoading}
                     onClick={() => setProposalStep((prev) => (prev - 1) as any)}
-                    className="text-xs font-bold text-[#667085] hover:text-[#17171C] cursor-pointer"
+                    className="text-xs font-bold text-[#667085] hover:text-[#17171C] cursor-pointer disabled:opacity-50"
                   >
                     ← Назад
                   </button>
                 ) : (
                   <button
                     type="button"
+                    disabled={submitProposalAction.isLoading}
                     onClick={() => setIsModalOpen(false)}
-                    className="text-xs font-bold text-[#667085] hover:text-[#17171C] cursor-pointer"
+                    className="text-xs font-bold text-[#667085] hover:text-[#17171C] cursor-pointer disabled:opacity-50"
                   >
                     Отмена
                   </button>
@@ -457,11 +499,21 @@ export const StudentTaskScreen: React.FC<StudentTaskScreenProps> = ({
                 ) : (
                   <button
                     type="button"
+                    disabled={submitProposalAction.isLoading}
                     onClick={handleSubmitProposal}
-                    className="h-10 px-6 bg-[#2CC7B5] hover:bg-[#20AE9D] text-white text-xs font-bold rounded-xl transition-all flex items-center gap-2 cursor-pointer shadow-md"
+                    className="h-10 px-6 bg-[#2CC7B5] hover:bg-[#20AE9D] disabled:opacity-60 disabled:cursor-not-allowed text-white text-xs font-bold rounded-xl transition-all flex items-center gap-2 cursor-pointer shadow-md"
                   >
-                    <Send className="w-3.5 h-3.5" />
-                    <span>Отправить предложение бизнесу</span>
+                    {submitProposalAction.isLoading ? (
+                      <>
+                        <Loader2 className="w-4 h-4 animate-spin text-white" />
+                        <span>Отправляем…</span>
+                      </>
+                    ) : (
+                      <>
+                        <Send className="w-3.5 h-3.5" />
+                        <span>Отправить предложение</span>
+                      </>
+                    )}
                   </button>
                 )}
               </div>

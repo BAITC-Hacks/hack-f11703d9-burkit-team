@@ -1,5 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { Task, UserRole } from '../types';
+import { talapApi } from '../api/talapApi';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   Search, 
@@ -17,6 +18,7 @@ interface CatalogScreenProps {
   onOpenTask: (task: Task) => void;
   onEditTask?: (task: Task) => void;
   onNavigateToCreate?: () => void;
+  isMockData?: boolean;
 }
 
 export const CatalogScreen: React.FC<CatalogScreenProps> = ({
@@ -25,6 +27,7 @@ export const CatalogScreen: React.FC<CatalogScreenProps> = ({
   onOpenTask,
   onEditTask,
   onNavigateToCreate,
+  isMockData = true,
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedTheme, setSelectedTheme] = useState<string>('all');
@@ -151,6 +154,11 @@ export const CatalogScreen: React.FC<CatalogScreenProps> = ({
         </div>
 
         <div className="flex items-center gap-2">
+          {isMockData && (
+            <span className="px-3 py-1.5 bg-[#FFF8E7] text-[#92400E] border border-[#FFC44D]/40 rounded-xl text-xs font-bold shadow-2xs">
+              Тестовый режим
+            </span>
+          )}
           <div className="px-3.5 py-1.5 bg-white rounded-xl border border-[#E2E5EE] shadow-2xs text-xs font-bold text-[#667085]">
             Всего задач: <span className="text-[#17171C] font-black">{tasks.length}</span>
           </div>

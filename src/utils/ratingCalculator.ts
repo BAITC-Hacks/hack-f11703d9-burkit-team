@@ -247,7 +247,9 @@ export function calculateTaskRating(task: Partial<Task>): RatingBreakdown {
 
   // Calculate Next Best Step (Requirement 8)
   let nextBestStep: RatingBreakdown['nextBestStep'] = undefined;
-  if (c2 < 16) {
+  if (totalScore >= 100) {
+    nextBestStep = undefined;
+  } else if (c2 < 16) {
     nextBestStep = {
       text: 'Добавьте описание доступных данных — до +20 баллов',
       field: 'dataProvided',

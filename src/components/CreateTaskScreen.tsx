@@ -1,7 +1,8 @@
-import React, { useState, useEffect } from 'react';
-import { SAMPLE_AI_QUESTIONS } from '../data/mockData';
-import { ClarifyingQuestion, Task, TaskTheme, RatingBreakdown } from '../types';
-import { calculateTaskRating } from '../utils/ratingCalculator';
+import React, { useState, useEffect, useCallback } from 'react';
+import { Task, TaskTheme, RatingBreakdown } from '../types';
+import { AIQuestionDto } from '../api/types';
+import { talapApi } from '../api/talapApi';
+import { useAsyncAction } from '../utils/useAsyncAction';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   Sparkles, 
@@ -18,10 +19,15 @@ import {
   Eye,
   Send,
   Zap,
-  RotateCcw
+  RotateCcw,
+  Loader2,
+  AlertTriangle,
+  FileText,
+  Save
 } from 'lucide-react';
 import { ContextHelp } from './ui/ContextHelp';
 import { useToast } from './ui/Toast';
+import { Select, SelectOption } from './ui/Select';
 
 interface CreateTaskScreenProps {
   onTaskCreated: (newTask: Task) => void;
@@ -34,11 +40,11 @@ export const CreateTaskScreen: React.FC<CreateTaskScreenProps> = ({
 }) => {
   const { showToast } = useToast();
 
-  // 4 clear steps:
-  // Step 1: Что вы хотите улучшить?
-  // Step 2: Уточняющие вопросы TALAP (one-by-one conversational flow)
-  // Step 3: Проверьте карточку задачи
-  // Step 4: Публикация и позиция в каталоге
+  // 4 steps:
+  // Step 1: Проблема
+  // Step 2: Уточняющие вопросы
+  // Step 3: Проверка карточки
+  // Step 4: Публикация
   const [currentStep, setCurrentStep] = useState<number>(1);
 
   // Form states
@@ -48,8 +54,13 @@ export const CreateTaskScreen: React.FC<CreateTaskScreenProps> = ({
   const [companyName, setCompanyName] = useState('Magnum Cash & Carry');
   const [taskTheme, setTaskTheme] = useState<TaskTheme>('AI / ML');
 
-  // Conversational questions state
+  // Dynamic AI Questions state
+  const [questions, setQuestions] = useState<AIQuestionDto[]>([]);
+  const [questionsLoading, setQuestionsLoading] = useState(false);
+  const [questionsError, setQuestionsError] = useState<string | null>(null);
   const [questionIndex, setQuestionIndex] = useState(0);
+
+  // Answers stored strictly as Record<string, string> by field name
   const [answers, setAnswers] = useState<Record<string, string>>({
     targetUsers: 'Категорийные менеджеры, товароведы магазинов и операторы склада.',
     dataProvided: 'Обезличенная выгрузка из 45 000 чеков за 6 месяцев по категориям молочной и хлебной продукции + данные о погоде и праздниках.',
@@ -59,49 +70,118 @@ export const CreateTaskScreen: React.FC<CreateTaskScreenProps> = ({
     interactionFormat: 'Еженедельный 30-минутный созвон по вторникам + чат в Telegram с ведущим аналитиком.'
   });
 
-  // Current question active selection / custom input
-  const currentQuestion = SAMPLE_AI_QUESTIONS[questionIndex];
   const [customAnswer, setCustomAnswer] = useState('');
 
-  // Rating state
-  const [rating, setRating] = useState<RatingBreakdown>(() => 
-    calculateTaskRating({
+  // Rating state from server API
+  const [rating, setRating] = useState<RatingBreakdown | null>(null);
+  const [isTestMode, setIsTestMode] = useState(true);
+
+  // Fetch dynamic AI questions from API
+  const loadQuestions = useCallback(async () => {
+    setQuestionsLoading(true);
+    setQuestionsError(null);
+    try {
+      const res = await talapApi.fetchAIQuestions({
+        problem: problemDescription,
+        theme: taskTheme,
+      });
+      if (res.success && res.data) {
+        setQuestions(res.data);
+      } else {
+        setQuestionsError(res.error?.message || 'Не удалось загрузить уточняющие вопросы');
+      }
+    } catch (err: any) {
+      setQuestionsError(err?.message || 'Ошибка подключения к сервису вопросов');
+    } finally {
+      setQuestionsLoading(false);
+    }
+  }, [problemDescription, taskTheme]);
+
+  useEffect(() => {
+    loadQuestions();
+  }, [loadQuestions]);
+
+  // Recalculate unified server rating whenever answers change
+  useEffect(() => {
+    let isMounted = true;
+    talapApi.fetchTaskRating({
       need: problemDescription,
-      targetUsers: answers.targetUsers,
-      dataProvided: answers.dataProvided,
-      expectedResult: answers.expectedResult,
-      successCriteria: answers.successCriteria,
-      constraints: answers.constraints,
-      interactionFormat: answers.interactionFormat
-    })
+      targetUsers: answers.targetUsers || '',
+      dataProvided: answers.dataProvided || '',
+      expectedResult: answers.expectedResult || '',
+      successCriteria: answers.successCriteria || '',
+      constraints: answers.constraints || '',
+      interactionFormat: answers.interactionFormat || ''
+    }).then((res) => {
+      if (isMounted && res.success && res.data) {
+        setRating(res.data);
+        setIsTestMode(Boolean(res.isMock));
+      }
+    });
+    return () => {
+      isMounted = false;
+    };
+  }, [problemDescription, answers]);
+
+  // Current active question
+  const currentQuestion: AIQuestionDto | undefined = questions[questionIndex];
+
+  // Async action for publishing
+  const publishAction = useAsyncAction(
+    async (published: boolean) => {
+      const title = problemDescription.length > 70 
+        ? problemDescription.slice(0, 70).replace(/\s+[^\s]+$/, '') + '...' 
+        : problemDescription;
+
+      return talapApi.createTask({
+        title: title || 'Практическая задача бизнеса',
+        theme: taskTheme,
+        company: {
+          name: companyName || 'Бизнес-партнёр TALAP',
+          industry: `${taskTheme} & Retail`,
+          repName: 'Данияр Ахметов',
+          repRole: 'Руководитель аналитики',
+          repContact: 'innovations@company.kz',
+        },
+        context: `Практическая задача компании: ${problemDescription}`,
+        need: problemDescription,
+        targetUsers: answers.targetUsers || 'Сотрудники компании и клиенты.',
+        dataProvided: answers.dataProvided || 'Формат данных будет согласован с выбранной командой.',
+        constraints: answers.constraints || 'Современный открытый стек технологий.',
+        expectedResult: answers.expectedResult || 'Работающий прототип с понятной инструкцией.',
+        successCriteria: answers.successCriteria || 'Работоспособность решения на тестовых данных.',
+        contact: 'Данияр Ахметов, Telegram: @daniyar_biz',
+        interactionFormat: answers.interactionFormat || 'Еженедельный созвон и чат для оперативных вопросов.',
+        published,
+      });
+    },
+    {
+      onSuccess: (createdTask) => {
+        showToast(
+          createdTask.published
+            ? 'Задача успешно опубликована в каталоге!'
+            : 'Черновик задачи сохранён!',
+          'success'
+        );
+        onTaskCreated(createdTask);
+      },
+      onError: (errMsg) => {
+        showToast(`Ошибка: ${errMsg}`, 'error');
+      },
+    }
   );
 
-  // Demo mode state
+  // Demo walkthrough controller
   const [isDemoActive, setIsDemoActive] = useState(false);
   const [demoStep, setDemoStep] = useState(0);
 
-  // Recalculate rating whenever answers or description change
-  useEffect(() => {
-    const updated = calculateTaskRating({
-      need: problemDescription,
-      targetUsers: answers.targetUsers,
-      dataProvided: answers.dataProvided,
-      expectedResult: answers.expectedResult,
-      successCriteria: answers.successCriteria,
-      constraints: answers.constraints,
-      interactionFormat: answers.interactionFormat
-    });
-    setRating(updated);
-  }, [problemDescription, answers]);
-
-  // Demo walkthrough controller
   const handleStartDemo = () => {
     setIsDemoActive(true);
     setDemoStep(1);
     setCurrentStep(1);
     setProblemDescription('Мы часто списываем продукты в 220 филиалах и хотим заранее понимать объём спроса.');
     setCompanyName('Magnum Retail KZ');
-    showToast('Демо-режим: шаг 1 — слабое описание задачи', 'info');
+    showToast('Демо-режим: шаг 1 — формулирование проблемы', 'info');
   };
 
   const handleNextDemoStep = () => {
@@ -109,33 +189,33 @@ export const CreateTaskScreen: React.FC<CreateTaskScreenProps> = ({
       setDemoStep(2);
       setCurrentStep(2);
       setQuestionIndex(0);
-      showToast('Демо-режим: шаг 2 — отвечаем на уточняющие вопросы', 'info');
+      showToast('Демо-режим: шаг 2 — ответы на вопросы', 'info');
     } else if (demoStep === 2) {
-      if (questionIndex < SAMPLE_AI_QUESTIONS.length - 1) {
-        setQuestionIndex(prev => prev + 1);
+      if (questionIndex < questions.length - 1) {
+        setQuestionIndex((prev) => prev + 1);
       } else {
         setDemoStep(3);
         setCurrentStep(3);
-        showToast('Демо-режим: шаг 3 — проверяем собранную карточку', 'info');
+        showToast('Демо-режим: шаг 3 — проверка карточки', 'info');
       }
     } else if (demoStep === 3) {
       setDemoStep(4);
       setCurrentStep(4);
-      showToast('Демо-режим: шаг 4 — публикация и рост рейтинга до «Готовая»', 'success');
+      showToast('Демо-режим: шаг 4 — публикация задачи', 'success');
     } else {
       setIsDemoActive(false);
       setDemoStep(0);
-      handlePublish();
+      publishAction.execute(true);
     }
   };
 
   const handleStopDemo = () => {
     setIsDemoActive(false);
     setDemoStep(0);
-    showToast('Демо-режим выключен. Вы можете продолжить самостоятельно.', 'info');
+    showToast('Демо-режим выключен.', 'info');
   };
 
-  // Step 1 -> Step 2
+  // Step 1 Submit
   const handleStep1Submit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!problemDescription.trim()) {
@@ -146,65 +226,30 @@ export const CreateTaskScreen: React.FC<CreateTaskScreenProps> = ({
     setQuestionIndex(0);
   };
 
-  // Answer a question in Step 2
+  // Answer question in Step 2
   const handleAnswerQuestion = (val: string) => {
     if (!currentQuestion) return;
-    const field = currentQuestion.field;
-    setAnswers(prev => ({ ...prev, [field]: val }));
+    const fieldKey = currentQuestion.field;
+    setAnswers((prev) => ({ ...prev, [fieldKey]: val }));
     setCustomAnswer('');
-    showToast(`Ответ сохранён: +${currentQuestion.maxPoints || 10} к рейтингу!`, 'success');
+    showToast(`Ответ сохранён: +${currentQuestion.maxPoints || 10} к рейтингу`, 'success');
 
-    if (questionIndex < SAMPLE_AI_QUESTIONS.length - 1) {
-      setQuestionIndex(prev => prev + 1);
+    if (questionIndex < questions.length - 1) {
+      setQuestionIndex((prev) => prev + 1);
     } else {
       setCurrentStep(3);
     }
   };
 
   const handleSkipQuestion = () => {
-    if (questionIndex < SAMPLE_AI_QUESTIONS.length - 1) {
-      setQuestionIndex(prev => prev + 1);
+    if (questionIndex < questions.length - 1) {
+      setQuestionIndex((prev) => prev + 1);
     } else {
       setCurrentStep(3);
     }
   };
 
-  // Publish Task
-  const handlePublish = () => {
-    const title = problemDescription.length > 70 
-      ? problemDescription.slice(0, 70).replace(/\s+[^\s]+$/, '') + '...' 
-      : problemDescription;
-
-    const newTask: Task = {
-      id: `task-${Date.now()}`,
-      title: title || 'Практическая задача бизнеса',
-      theme: taskTheme,
-      company: {
-        name: companyName || 'Бизнес-партнёр TALAP',
-        industry: `${taskTheme} & Retail`,
-        repName: 'Данияр Ахметов',
-        repRole: 'Руководитель аналитики',
-        repContact: 'innovations@company.kz'
-      },
-      cardColor: 'purple',
-      updatedAt: 'Только что',
-      proposalsCount: 0,
-      context: `Практическая задача компании: ${problemDescription}`,
-      need: problemDescription,
-      targetUsers: answers.targetUsers || 'Сотрудники компании и конечные пользователи.',
-      dataProvided: answers.dataProvided || 'Формат данных будет предоставлен выбранной команде.',
-      constraints: answers.constraints || 'Современный открытый стек технологий.',
-      expectedResult: answers.expectedResult || 'Работающий прототип с инструкцией по запуску.',
-      successCriteria: answers.successCriteria || 'Работоспособность решения на проверочных данных бизнеса.',
-      contact: 'Данияр Ахметов, Telegram: @daniyar_biz',
-      interactionFormat: answers.interactionFormat || 'Еженедельный синк и чат для оперативных вопросов.',
-      published: true,
-      rating
-    };
-
-    onTaskCreated(newTask);
-    showToast('Задача опубликована в каталоге! Студенческие команды могут отправлять предложения.', 'success');
-  };
+  const totalScore = rating ? Math.min(100, Math.max(0, rating.totalScore)) : 0;
 
   return (
     <div className="h-full flex flex-col min-h-0 space-y-4 max-w-[1040px] mx-auto w-full overflow-y-auto pr-1">
@@ -257,6 +302,12 @@ export const CreateTaskScreen: React.FC<CreateTaskScreenProps> = ({
 
         {/* Right side: Demo mode trigger */}
         <div className="flex items-center gap-3 shrink-0">
+          {isTestMode && (
+            <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-[#FFF8E7] text-[#92400E] border border-[#FFC44D]/40">
+              Тестовый режим
+            </span>
+          )}
+
           {!isDemoActive ? (
             <button
               type="button"
@@ -302,9 +353,27 @@ export const CreateTaskScreen: React.FC<CreateTaskScreenProps> = ({
         </div>
       </div>
 
+      {/* Global Error Banner for Async Action */}
+      {publishAction.isError && (
+        <div className="p-4 bg-[#FFF0F0] border border-[#FF6266]/30 rounded-2xl flex items-center justify-between gap-3 text-xs text-[#DC2626]">
+          <div className="flex items-center gap-2 font-semibold">
+            <AlertTriangle className="w-4 h-4 shrink-0" />
+            <span>{publishAction.error || 'Произошла ошибка при отправке на сервер.'}</span>
+          </div>
+          <button
+            type="button"
+            onClick={publishAction.retry}
+            className="px-3 py-1.5 bg-[#FF6266] text-white font-bold rounded-lg hover:bg-[#E5484D] transition-colors cursor-pointer shrink-0 flex items-center gap-1.5"
+          >
+            <RotateCcw className="w-3.5 h-3.5" />
+            <span>Повторить</span>
+          </button>
+        </div>
+      )}
+
       {/* Main Step Body */}
       <AnimatePresence mode="wait">
-        {/* ================= STEP 1: ЧТО ВЫ ХОТИТЕ УЛУЧШИТЬ? ================= */}
+        {/* ================= STEP 1: ПРОБЛЕМА ================= */}
         {currentStep === 1 && (
           <motion.div
             key="step1"
@@ -323,7 +392,7 @@ export const CreateTaskScreen: React.FC<CreateTaskScreenProps> = ({
                 Что вы хотите улучшить?
               </h2>
               <p className="text-sm text-[#667085]">
-                Опишите проблему так, как рассказали бы её коллеге. TALAP поможет оформить её в чёткую задачу для студентов.
+                Опишите задачу простыми словами. TALAP поможет структурировать её для студенческих команд.
               </p>
             </div>
 
@@ -347,19 +416,20 @@ export const CreateTaskScreen: React.FC<CreateTaskScreenProps> = ({
                   <label className="text-xs font-bold text-[#17171C] block">
                     Отрасль / направление
                   </label>
-                  <select
+                  <Select
                     value={taskTheme}
-                    onChange={(e) => setTaskTheme(e.target.value as TaskTheme)}
-                    className="w-full h-11 px-4 rounded-xl border border-[#E2E5EE] bg-[#F8F9FD] focus:bg-white focus:border-[#7047EB] text-sm text-[#17171C] outline-none transition-all font-medium cursor-pointer"
-                  >
-                    <option value="AI / ML">AI & Машинное обучение</option>
-                    <option value="FinTech">FinTech & Финансы</option>
-                    <option value="LogTech">LogTech & Доставка</option>
-                    <option value="E-commerce">E-commerce & Ритейл</option>
-                    <option value="GovTech">GovTech & Городские сервисы</option>
-                    <option value="HealthTech">HealthTech & Медицина</option>
-                    <option value="EdTech">EdTech & Образование</option>
-                  </select>
+                    onChange={(val) => setTaskTheme(val as TaskTheme)}
+                    options={[
+                      { value: 'AI / ML', label: 'AI & Машинное обучение' },
+                      { value: 'FinTech', label: 'FinTech & Финансы' },
+                      { value: 'LogTech', label: 'LogTech & Доставка' },
+                      { value: 'E-commerce', label: 'E-commerce & Ритейл' },
+                      { value: 'GovTech', label: 'GovTech & Городские сервисы' },
+                      { value: 'HealthTech', label: 'HealthTech & Медицина' },
+                      { value: 'EdTech', label: 'EdTech & Образование' },
+                    ]}
+                    triggerClassName="h-11 rounded-xl bg-[#F8F9FD] border-[#E2E5EE] text-sm font-medium"
+                  />
                 </div>
               </div>
 
@@ -367,39 +437,34 @@ export const CreateTaskScreen: React.FC<CreateTaskScreenProps> = ({
                 <div className="flex items-center justify-between">
                   <label className="text-xs font-bold text-[#17171C] flex items-center gap-1.5">
                     <span>Опишите проблему своими словами</span>
-                    <span className="text-[#FF6266]">*</span>
+                    <ContextHelp topic="context" />
                   </label>
-                  <ContextHelp topic="readiness" label="Как это оценивается" />
+                  <span className="text-xs text-[#667085] font-semibold">
+                    {problemDescription.length} символов
+                  </span>
                 </div>
 
                 <textarea
                   rows={4}
                   value={problemDescription}
                   onChange={(e) => setProblemDescription(e.target.value)}
-                  placeholder="Опишите проблему так, как рассказали бы её коллеге."
-                  className="w-full p-4 rounded-xl border border-[#E2E5EE] bg-[#F8F9FD] focus:bg-white focus:border-[#7047EB] text-sm text-[#17171C] outline-none transition-all font-medium resize-none leading-relaxed"
+                  placeholder="Опишите текущую ситуацию, узкое место в процессе или задачу, которую нужно решить..."
+                  className="w-full p-4 rounded-xl border border-[#E2E5EE] bg-[#F8F9FD] focus:bg-white focus:border-[#7047EB] text-sm text-[#17171C] outline-none transition-all leading-relaxed resize-none font-medium"
                   required
                 />
-
-                <div className="p-3 bg-[#F0ECFF]/60 rounded-xl border border-[#7047EB]/20 text-xs text-[#475467] flex items-start gap-2">
-                  <Sparkles className="w-4 h-4 text-[#7047EB] shrink-0 mt-0.5" />
-                  <div>
-                    <span className="font-bold text-[#7047EB]">Пример хорошего описания: </span>
-                    «Мы часто списываем продукты в 220 магазинах и хотим заранее прогнозировать спрос на молочную продукцию, чтобы избежать потерь и не оставлять пустые полки.»
-                  </div>
-                </div>
               </div>
 
               <div className="flex items-center justify-between pt-2">
-                <div className="text-xs text-[#667085]">
-                  После этого шага TALAP задаст несколько коротких вопросов для повышения рейтинга.
+                <div className="flex items-center gap-2 text-xs text-[#667085]">
+                  <Sparkles className="w-4 h-4 text-[#7047EB]" />
+                  <span>На следующем шаге TALAP задаст несколько уточняющих вопросов</span>
                 </div>
 
                 <button
                   type="submit"
-                  className="h-11 px-6 bg-[#7047EB] hover:bg-[#5E32DF] text-white text-xs font-bold rounded-xl transition-all flex items-center gap-2 cursor-pointer shadow-[0_4px_14px_rgba(112,71,235,0.25)]"
+                  className="h-11 px-6 bg-[#7047EB] hover:bg-[#5E32DF] text-white text-xs font-bold rounded-xl transition-all flex items-center gap-2 cursor-pointer shadow-xs"
                 >
-                  <span>Продолжить</span>
+                  <span>Перейти к вопросам</span>
                   <ArrowRight className="w-4 h-4" />
                 </button>
               </div>
@@ -407,124 +472,173 @@ export const CreateTaskScreen: React.FC<CreateTaskScreenProps> = ({
           </motion.div>
         )}
 
-        {/* ================= STEP 2: УТОЧНЯЮЩИЕ ВОПРОСЫ ================= */}
-        {currentStep === 2 && currentQuestion && (
+        {/* ================= STEP 2: ДИНАМИЧЕСКИЕ AI-ВОПРОСЫ ================= */}
+        {currentStep === 2 && (
           <motion.div
-            key={`step2-${questionIndex}`}
-            initial={{ opacity: 0, x: 12 }}
-            animate={{ opacity: 1, x: 0 }}
-            exit={{ opacity: 0, x: -12 }}
-            className="bg-white rounded-2xl border border-[#E2E5EE] p-6 sm:p-8 shadow-xs space-y-6"
+            key="step2"
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -10 }}
+            className="space-y-4"
           >
-            {/* Header with question counter and points potential */}
-            <div className="flex items-center justify-between pb-3 border-b border-[#E2E5EE]">
-              <div className="space-y-1">
-                <span className="text-xs font-bold text-[#7047EB] uppercase tracking-wider">
-                  Вопрос {questionIndex + 1} из {SAMPLE_AI_QUESTIONS.length}
-                </span>
-                <h3 className="text-xl sm:text-2xl font-black text-[#17171C] tracking-tight">
-                  {currentQuestion.question}
-                </h3>
-              </div>
-
-              <div className="shrink-0 text-right">
-                <span className="text-xs font-bold px-3 py-1 rounded-full bg-[#E8FAF7] text-[#149A8B] border border-[#2CC7B5]/30">
-                  до +{currentQuestion.maxPoints || 15} баллов
-                </span>
-              </div>
-            </div>
-
-            {/* Explanation box: Зачем это нужно */}
-            <div className="p-4 bg-[#F8F9FD] rounded-xl border border-[#E2E5EE] space-y-2">
-              <div className="flex items-center gap-2 text-xs font-bold text-[#17171C]">
-                <HelpCircle className="w-4 h-4 text-[#7047EB]" />
-                <span>Зачем это нужно студентам:</span>
-              </div>
-              <p className="text-xs text-[#667085] leading-relaxed">
-                {currentQuestion.explanation}
-              </p>
-              {currentQuestion.exampleAnswer && (
-                <div className="text-[11px] text-[#475467] font-medium pt-1 border-t border-[#E2E5EE]/60">
-                  <span className="font-bold text-[#7047EB]">Пример ответа: </span>
-                  {currentQuestion.exampleAnswer}
+            {/* Loading questions state */}
+            {questionsLoading && (
+              <div className="bg-white rounded-2xl border border-[#E2E5EE] p-12 text-center space-y-3">
+                <Loader2 className="w-8 h-8 text-[#7047EB] animate-spin mx-auto" />
+                <div className="text-sm font-bold text-[#17171C]">
+                  Формируем уточняющие вопросы...
                 </div>
-              )}
-            </div>
-
-            {/* Quick Answer Options */}
-            <div className="space-y-3">
-              <label className="text-xs font-bold text-[#17171C] block">
-                Выберите готовый вариант или напишите свой:
-              </label>
-
-              <div className="grid grid-cols-1 gap-2.5">
-                {currentQuestion.options.map((opt, idx) => (
-                  <button
-                    key={idx}
-                    type="button"
-                    onClick={() => handleAnswerQuestion(opt)}
-                    className="p-3.5 text-left rounded-xl border border-[#E2E5EE] hover:border-[#7047EB] hover:bg-[#F0ECFF]/30 transition-all text-xs font-medium text-[#17171C] flex items-center justify-between group cursor-pointer"
-                  >
-                    <span>{opt}</span>
-                    <span className="text-xs font-bold text-[#7047EB] opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1 shrink-0 ml-2">
-                      <span>Выбрать</span>
-                      <ArrowRight className="w-3.5 h-3.5" />
-                    </span>
-                  </button>
-                ))}
+                <div className="text-xs text-[#667085]">
+                  Анализируем контекст вашей задачи
+                </div>
               </div>
-            </div>
+            )}
 
-            {/* Custom Answer Input */}
-            <div className="space-y-2 pt-2">
-              <label className="text-xs font-bold text-[#667085] block">
-                Или напишите свой вариант:
-              </label>
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  value={customAnswer}
-                  onChange={(e) => setCustomAnswer(e.target.value)}
-                  placeholder="Ваш ответ своими словами..."
-                  className="flex-1 h-11 px-4 rounded-xl border border-[#E2E5EE] bg-[#F8F9FD] focus:bg-white focus:border-[#7047EB] text-xs text-[#17171C] outline-none font-medium"
-                />
+            {/* Error loading questions */}
+            {questionsError && !questionsLoading && (
+              <div className="bg-white rounded-2xl border border-[#FF6266]/30 p-8 text-center space-y-4">
+                <AlertTriangle className="w-8 h-8 text-[#FF6266] mx-auto" />
+                <div className="text-sm font-bold text-[#17171C]">
+                  {questionsError}
+                </div>
                 <button
                   type="button"
-                  disabled={!customAnswer.trim()}
-                  onClick={() => customAnswer.trim() && handleAnswerQuestion(customAnswer.trim())}
-                  className="h-11 px-4 bg-[#7047EB] disabled:bg-[#E2E5EE] text-white text-xs font-bold rounded-xl transition-all cursor-pointer disabled:cursor-not-allowed"
+                  onClick={loadQuestions}
+                  className="px-4 py-2 bg-[#7047EB] text-white text-xs font-bold rounded-xl hover:bg-[#5E32DF] transition-colors cursor-pointer inline-flex items-center gap-1.5"
                 >
-                  Применить
+                  <RotateCcw className="w-3.5 h-3.5" />
+                  <span>Повторить загрузку</span>
                 </button>
               </div>
-            </div>
+            )}
 
-            {/* Step 2 Bottom Controls */}
-            <div className="flex items-center justify-between pt-4 border-t border-[#E2E5EE]">
-              <button
-                type="button"
-                onClick={() => {
-                  if (questionIndex > 0) setQuestionIndex(prev => prev - 1);
-                  else setCurrentStep(1);
-                }}
-                className="text-xs font-bold text-[#667085] hover:text-[#17171C] flex items-center gap-1 cursor-pointer transition-colors"
-              >
-                <ArrowLeft className="w-3.5 h-3.5" />
-                <span>Назад</span>
-              </button>
+            {/* Questions loaded & available */}
+            {!questionsLoading && !questionsError && currentQuestion && (
+              <div className="bg-white rounded-2xl border border-[#E2E5EE] p-6 sm:p-8 shadow-xs space-y-6">
+                <div className="flex items-center justify-between border-b border-[#E2E5EE] pb-4">
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2 text-xs font-bold text-[#7047EB] uppercase tracking-wider">
+                      <span>Вопрос {questionIndex + 1} из {questions.length}</span>
+                      <span>·</span>
+                      <span>+{currentQuestion.maxPoints || 10} баллов к готовности</span>
+                    </div>
+                    <h3 className="text-xl font-black text-[#17171C] tracking-tight">
+                      {currentQuestion.question}
+                    </h3>
+                  </div>
 
-              <button
-                type="button"
-                onClick={handleSkipQuestion}
-                className="text-xs font-bold text-[#7047EB] hover:underline cursor-pointer"
-              >
-                Пропустить, отвечу позже →
-              </button>
-            </div>
+                  <span className="text-xs font-bold px-3 py-1 rounded-full bg-[#F0ECFF] text-[#7047EB]">
+                    {Math.round(((questionIndex + 1) / questions.length) * 100)}%
+                  </span>
+                </div>
+
+                {currentQuestion.explanation && (
+                  <p className="text-xs text-[#667085] leading-relaxed">
+                    {currentQuestion.explanation}
+                  </p>
+                )}
+
+                {/* Option buttons */}
+                {currentQuestion.options && currentQuestion.options.length > 0 && (
+                  <div className="space-y-2.5">
+                    <div className="text-xs font-bold text-[#667085] uppercase tracking-wider">
+                      Выберите подходящий вариант:
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                      {currentQuestion.options.map((opt, i) => {
+                        const isSelected = answers[currentQuestion.field] === opt;
+                        return (
+                          <button
+                            key={i}
+                            type="button"
+                            onClick={() => handleAnswerQuestion(opt)}
+                            className={`p-3.5 rounded-xl border text-left text-xs font-semibold transition-all cursor-pointer flex items-start gap-2.5 ${
+                              isSelected
+                                ? 'border-[#7047EB] bg-[#F0ECFF] text-[#7047EB] shadow-xs'
+                                : 'border-[#E2E5EE] bg-[#F8F9FD] text-[#17171C] hover:border-[#7047EB]/40 hover:bg-white'
+                            }`}
+                          >
+                            <span className="w-5 h-5 rounded-md bg-white border border-[#E2E5EE] flex items-center justify-center text-[10px] font-bold shrink-0">
+                              {i + 1}
+                            </span>
+                            <span className="leading-snug">{opt}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {/* Custom input */}
+                <div className="space-y-2 pt-2 border-t border-[#F0F2F7]">
+                  <div className="text-xs font-bold text-[#667085] uppercase tracking-wider">
+                    Или напишите свой вариант:
+                  </div>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={customAnswer || answers[currentQuestion.field] || ''}
+                      onChange={(e) => setCustomAnswer(e.target.value)}
+                      placeholder={currentQuestion.exampleAnswer || 'Введите свой ответ...'}
+                      className="flex-1 h-11 px-4 rounded-xl border border-[#E2E5EE] bg-[#F8F9FD] focus:bg-white focus:border-[#7047EB] text-xs text-[#17171C] outline-none transition-all font-medium"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (customAnswer.trim()) {
+                          handleAnswerQuestion(customAnswer.trim());
+                        }
+                      }}
+                      disabled={!customAnswer.trim()}
+                      className="h-11 px-5 bg-[#7047EB] hover:bg-[#5E32DF] disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs font-bold rounded-xl transition-all flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <span>Сохранить</span>
+                      <Check className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </div>
+
+                {/* Bottom navigation */}
+                <div className="flex items-center justify-between pt-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (questionIndex > 0) {
+                        setQuestionIndex((prev) => prev - 1);
+                      } else {
+                        setCurrentStep(1);
+                      }
+                    }}
+                    className="text-xs font-bold text-[#667085] hover:text-[#17171C] flex items-center gap-1 cursor-pointer transition-colors"
+                  >
+                    <ArrowLeft className="w-3.5 h-3.5" />
+                    <span>Назад</span>
+                  </button>
+
+                  <div className="flex items-center gap-3">
+                    <button
+                      type="button"
+                      onClick={handleSkipQuestion}
+                      className="text-xs font-bold text-[#667085] hover:text-[#17171C] transition-colors cursor-pointer"
+                    >
+                      Пропустить этот вопрос
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setCurrentStep(3)}
+                      className="h-10 px-4 rounded-xl border border-[#E2E5EE] hover:bg-[#F8F9FD] text-xs font-bold text-[#17171C] transition-colors cursor-pointer"
+                    >
+                      К проверке карточки →
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
           </motion.div>
         )}
 
-        {/* ================= STEP 3: ПРОВЕРЬТЕ КАРТОЧКУ ================= */}
+        {/* ================= STEP 3: ПРОВЕРКА КАРТОЧКИ ================= */}
         {currentStep === 3 && (
           <motion.div
             key="step3"
@@ -533,80 +647,75 @@ export const CreateTaskScreen: React.FC<CreateTaskScreenProps> = ({
             exit={{ opacity: 0, y: -10 }}
             className="bg-white rounded-2xl border border-[#E2E5EE] p-6 sm:p-8 shadow-xs space-y-6"
           >
-            <div className="space-y-2">
-              <div className="flex items-center gap-2 text-xs font-bold text-[#7047EB] uppercase tracking-wider">
-                <span>Шаг 3 из 4</span>
-                <span>·</span>
-                <span>Проверка перед подтверждением</span>
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-[#E2E5EE] pb-4">
+              <div className="space-y-1">
+                <div className="flex items-center gap-2 text-xs font-bold text-[#7047EB] uppercase tracking-wider">
+                  <span>Шаг 3 из 4</span>
+                  <span>·</span>
+                  <span>Проверка сформированной карточки</span>
+                </div>
+                <h2 className="text-2xl font-black text-[#17171C] tracking-tight">
+                  Проверьте данные задачи
+                </h2>
               </div>
-              <h2 className="text-2xl font-black text-[#17171C] tracking-tight">
-                Проверьте карточку задачи
-              </h2>
-              <p className="text-sm text-[#667085]">
-                Мы использовали только предоставленные вами сведения. Проверьте карточку перед подтверждением.
-              </p>
+
+              {rating && (
+                <div className="flex items-center gap-3 bg-[#F8F9FD] p-2.5 px-4 rounded-xl border border-[#E2E5EE] shrink-0">
+                  <div className="text-right">
+                    <div className="text-xs font-bold text-[#667085]">Готовность:</div>
+                    <div className="text-sm font-black text-[#7047EB]">
+                      {totalScore} / 100 баллов
+                    </div>
+                  </div>
+                  <span className={`text-xs font-bold px-2.5 py-1 rounded-lg ${
+                    rating.readinessLevel === 'priority'
+                      ? 'bg-[#7047EB] text-white'
+                      : rating.readinessLevel === 'ready'
+                      ? 'bg-[#2CC7B5] text-white'
+                      : rating.readinessLevel === 'working'
+                      ? 'bg-[#FFC44D] text-[#92400E]'
+                      : 'bg-[#FF6266] text-white'
+                  }`}>
+                    {rating.readinessLabel}
+                  </span>
+                </div>
+              )}
             </div>
 
-            {/* Card preview table / fields */}
-            <div className="space-y-4 p-5 rounded-2xl bg-[#F8F9FD] border border-[#E2E5EE]">
-              <div className="flex items-center justify-between border-b border-[#E2E5EE] pb-3">
-                <div>
-                  <span className="text-xs font-bold text-[#667085]">{companyName} · {taskTheme}</span>
-                  <h3 className="text-base font-bold text-[#17171C] mt-0.5">
-                    {problemDescription}
-                  </h3>
+            {/* Summary card preview */}
+            <div className="space-y-4 text-xs">
+              <div className="p-4 bg-[#F8F9FD] rounded-xl border border-[#E2E5EE] space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="font-bold text-[#7047EB] text-sm">{companyName}</span>
+                  <span className="text-[#667085] font-semibold">{taskTheme}</span>
                 </div>
-                <span className="text-xs font-bold px-3 py-1 rounded-xl bg-white border border-[#E2E5EE] text-[#7047EB]">
-                  {rating.totalScore} / 100 баллов
-                </span>
+                <div className="text-sm font-bold text-[#17171C]">{problemDescription}</div>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
-                <div className="space-y-1">
-                  <span className="font-bold text-[#667085] block">Кто будет пользоваться решением:</span>
-                  <p className="text-[#17171C] bg-white p-2.5 rounded-lg border border-[#E2E5EE]">
-                    {answers.targetUsers || 'Не заполнено'}
-                  </p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="p-3.5 bg-[#F8F9FD] rounded-xl border border-[#E2E5EE] space-y-1">
+                  <span className="font-bold text-[#667085] block">Пользователи решения:</span>
+                  <p className="text-[#17171C] font-medium">{answers.targetUsers || 'Не заполнено'}</p>
                 </div>
 
-                <div className="space-y-1">
-                  <span className="font-bold text-[#667085] block">Какие данные вы предоставите:</span>
-                  <p className="text-[#17171C] bg-white p-2.5 rounded-lg border border-[#E2E5EE]">
-                    {answers.dataProvided || 'Не заполнено'}
-                  </p>
+                <div className="p-3.5 bg-[#F8F9FD] rounded-xl border border-[#E2E5EE] space-y-1">
+                  <span className="font-bold text-[#667085] block">Предоставляемые данные:</span>
+                  <p className="text-[#17171C] font-medium">{answers.dataProvided || 'Не заполнено'}</p>
                 </div>
 
-                <div className="space-y-1">
-                  <span className="font-bold text-[#667085] block">Что должна подготовить команда:</span>
-                  <p className="text-[#17171C] bg-white p-2.5 rounded-lg border border-[#E2E5EE]">
-                    {answers.expectedResult || 'Не заполнено'}
-                  </p>
+                <div className="p-3.5 bg-[#F8F9FD] rounded-xl border border-[#E2E5EE] space-y-1">
+                  <span className="font-bold text-[#667085] block">Ожидаемый результат:</span>
+                  <p className="text-[#17171C] font-medium">{answers.expectedResult || 'Не заполнено'}</p>
                 </div>
 
-                <div className="space-y-1">
-                  <span className="font-bold text-[#667085] block">Как вы поймёте, что задача решена:</span>
-                  <p className="text-[#17171C] bg-white p-2.5 rounded-lg border border-[#E2E5EE]">
-                    {answers.successCriteria || 'Не заполнено'}
-                  </p>
-                </div>
-
-                <div className="space-y-1">
-                  <span className="font-bold text-[#667085] block">Какие условия нужно учесть:</span>
-                  <p className="text-[#17171C] bg-white p-2.5 rounded-lg border border-[#E2E5EE]">
-                    {answers.constraints || 'Не заполнено'}
-                  </p>
-                </div>
-
-                <div className="space-y-1">
-                  <span className="font-bold text-[#667085] block">Связь с бизнесом и формат общения:</span>
-                  <p className="text-[#17171C] bg-white p-2.5 rounded-lg border border-[#E2E5EE]">
-                    {answers.interactionFormat || 'Не заполнено'}
-                  </p>
+                <div className="p-3.5 bg-[#F8F9FD] rounded-xl border border-[#E2E5EE] space-y-1">
+                  <span className="font-bold text-[#667085] block">Критерии успеха:</span>
+                  <p className="text-[#17171C] font-medium">{answers.successCriteria || 'Не заполнено'}</p>
                 </div>
               </div>
             </div>
 
-            {/* Bottom Actions */}
+            {/* Bottom actions */}
             <div className="flex items-center justify-between pt-2">
               <button
                 type="button"
@@ -620,19 +729,40 @@ export const CreateTaskScreen: React.FC<CreateTaskScreenProps> = ({
                 <span>Вернуться к вопросам</span>
               </button>
 
-              <button
-                type="button"
-                onClick={() => setCurrentStep(4)}
-                className="h-11 px-6 bg-[#7047EB] hover:bg-[#5E32DF] text-white text-xs font-bold rounded-xl transition-all flex items-center gap-2 cursor-pointer shadow-[0_4px_14px_rgba(112,71,235,0.25)]"
-              >
-                <span>Подтвердить карточку</span>
-                <ArrowRight className="w-4 h-4" />
-              </button>
+              <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  disabled={publishAction.isLoading}
+                  onClick={() => publishAction.execute(false)}
+                  className="h-11 px-5 rounded-xl border border-[#E2E5EE] hover:bg-[#F8F9FD] text-xs font-bold text-[#17171C] transition-colors cursor-pointer flex items-center gap-1.5 disabled:opacity-50"
+                >
+                  {publishAction.isLoading ? (
+                    <>
+                      <Loader2 className="w-3.5 h-3.5 animate-spin text-[#7047EB]" />
+                      <span>Сохраняем…</span>
+                    </>
+                  ) : (
+                    <>
+                      <Save className="w-3.5 h-3.5" />
+                      <span>Сохранить как черновик</span>
+                    </>
+                  )}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setCurrentStep(4)}
+                  className="h-11 px-6 bg-[#7047EB] hover:bg-[#5E32DF] text-white text-xs font-bold rounded-xl transition-all flex items-center gap-2 cursor-pointer shadow-xs"
+                >
+                  <span>Далее к публикации</span>
+                  <ArrowRight className="w-4 h-4" />
+                </button>
+              </div>
             </div>
           </motion.div>
         )}
 
-        {/* ================= STEP 4: ОПУБЛИКУЙТЕ ЗАДАЧУ ================= */}
+        {/* ================= STEP 4: ПУБЛИКАЦИЯ ================= */}
         {currentStep === 4 && (
           <motion.div
             key="step4"
@@ -650,54 +780,71 @@ export const CreateTaskScreen: React.FC<CreateTaskScreenProps> = ({
                 Карточка готова к публикации
               </h2>
               <p className="text-xs sm:text-sm text-[#667085]">
-                Студенческие команды смогут изучить вашу задачу в каталоге и направить обоснованные предложения.
+                Студенческие команды смогут изучить вашу задачу в каталоге и отправить предложения.
               </p>
             </div>
 
-            {/* Readiness Summary Card */}
-            <div className="p-5 rounded-2xl bg-[#F8F9FD] border border-[#E2E5EE] max-w-md mx-auto text-left space-y-3">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-bold text-[#667085]">Итоговая готовность:</span>
-                <span className="text-sm font-black text-[#7047EB]">{rating.totalScore} из 100 баллов</span>
-              </div>
+            {/* Readiness Summary */}
+            {rating && (
+              <div className="p-5 rounded-2xl bg-[#F8F9FD] border border-[#E2E5EE] max-w-md mx-auto text-left space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-[#667085]">Итоговая готовность:</span>
+                  <span className="text-sm font-black text-[#7047EB]">
+                    {totalScore} из 100 баллов
+                  </span>
+                </div>
 
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-bold text-[#667085]">Уровень задачи:</span>
-                <span className={`text-xs font-bold px-2.5 py-0.5 rounded-lg ${
-                  rating.readinessLevel === 'priority'
-                    ? 'bg-[#7047EB] text-white'
-                    : rating.readinessLevel === 'ready'
-                    ? 'bg-[#2CC7B5] text-white'
-                    : rating.readinessLevel === 'working'
-                    ? 'bg-[#FFC44D] text-[#92400E]'
-                    : 'bg-[#FF6266] text-white'
-                }`}>
-                  {rating.readinessLabel}
-                </span>
-              </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-[#667085]">Уровень задачи:</span>
+                  <span className={`text-xs font-bold px-2.5 py-0.5 rounded-lg ${
+                    rating.readinessLevel === 'priority'
+                      ? 'bg-[#7047EB] text-white'
+                      : rating.readinessLevel === 'ready'
+                      ? 'bg-[#2CC7B5] text-white'
+                      : rating.readinessLevel === 'working'
+                      ? 'bg-[#FFC44D] text-[#92400E]'
+                      : 'bg-[#FF6266] text-white'
+                  }`}>
+                    {rating.readinessLabel}
+                  </span>
+                </div>
 
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-bold text-[#667085]">Ориентировочная позиция в каталоге:</span>
-                <span className="text-xs font-bold text-[#2CC7B5]">В топ-3 рекомендаций</span>
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-[#667085]">Позиция в каталоге:</span>
+                  <span className="text-xs font-bold text-[#2CC7B5]">
+                    {totalScore >= 70 ? 'В топе рекомендаций' : 'Стандартное размещение'}
+                  </span>
+                </div>
               </div>
-            </div>
+            )}
 
             <div className="pt-2 flex flex-col sm:flex-row items-center justify-center gap-3">
               <button
                 type="button"
+                disabled={publishAction.isLoading}
                 onClick={() => setCurrentStep(3)}
-                className="h-11 px-5 rounded-xl border border-[#E2E5EE] text-xs font-bold text-[#667085] hover:text-[#17171C] transition-colors cursor-pointer"
+                className="h-11 px-5 rounded-xl border border-[#E2E5EE] text-xs font-bold text-[#667085] hover:text-[#17171C] transition-colors cursor-pointer disabled:opacity-50"
               >
                 Вернуться к проверке
               </button>
 
               <button
                 type="button"
-                onClick={handlePublish}
-                className="h-11 px-8 bg-[#7047EB] hover:bg-[#5E32DF] text-white text-xs font-bold rounded-xl transition-all flex items-center justify-center gap-2 cursor-pointer shadow-[0_4px_14px_rgba(112,71,235,0.3)]"
+                disabled={publishAction.isLoading}
+                onClick={() => publishAction.execute(true)}
+                className="h-11 px-8 bg-[#7047EB] hover:bg-[#5E32DF] disabled:opacity-60 disabled:cursor-not-allowed text-white text-xs font-bold rounded-xl transition-all flex items-center justify-center gap-2 cursor-pointer shadow-[0_4px_14px_rgba(112,71,235,0.3)]"
               >
-                <Check className="w-4 h-4 stroke-[3]" />
-                <span>Опубликовать в каталоге</span>
+                {publishAction.isLoading ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    <span>Публикуем…</span>
+                  </>
+                ) : (
+                  <>
+                    <Check className="w-4 h-4 stroke-[3]" />
+                    <span>Опубликовать в каталоге</span>
+                  </>
+                )}
               </button>
             </div>
           </motion.div>

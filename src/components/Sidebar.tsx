@@ -1,5 +1,7 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { ActiveScreen, UserRole } from '../types';
+import { TalapLogo } from './ui/TalapLogo';
+import { BrandKitModal } from './BrandKitModal';
 import { motion } from 'motion/react';
 import { 
   LayoutDashboard,
@@ -37,30 +39,37 @@ export const Sidebar: React.FC<SidebarProps> = ({
   pendingProposalsCount,
   myProposalsCount = 2,
 }) => {
+  const [isBrandKitOpen, setIsBrandKitOpen] = useState(false);
+
   return (
-    <aside className="w-64 min-w-[256px] max-w-[256px] bg-white border-r border-[#E2E5EE] flex flex-col justify-between shrink-0 select-none min-h-screen relative z-20 shadow-[2px_0_12px_rgba(0,0,0,0.02)]">
-      {/* Top Section: Logo & Role Switcher */}
-      <div className="p-5 space-y-6">
-        {/* Brand / Logo */}
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-[#7047EB] to-[#5527D6] text-white flex items-center justify-center font-black text-xl shadow-[0_4px_12px_rgba(112,71,235,0.3)]">
-            T
-          </div>
-          <div>
-            <div className="flex items-center gap-1.5">
-              <span className="font-extrabold text-lg tracking-tight text-[#17171C]">
-                TALAP
-              </span>
-              <span className="text-[10px] font-bold text-[#7047EB] bg-[#7047EB]/10 border border-[#7047EB]/20 px-1.5 py-0.5 rounded-md flex items-center gap-0.5">
-                <Sparkles className="w-2.5 h-2.5 text-[#7047EB]" />
-                <span>AI</span>
-              </span>
+    <>
+      <aside className="w-64 min-w-[256px] max-w-[256px] bg-white border-r border-[#E2E5EE] flex flex-col justify-between shrink-0 select-none min-h-screen relative z-20 shadow-[2px_0_12px_rgba(0,0,0,0.02)]">
+        {/* Top Section: Logo & Role Switcher */}
+        <div className="p-5 space-y-6">
+          {/* Brand / Logo */}
+          <div 
+            onClick={() => setIsBrandKitOpen(true)}
+            className="flex items-center gap-3 cursor-pointer group"
+            title="Открыть логотипы и Brand Kit"
+          >
+            <div className="w-10 h-10 rounded-xl bg-[#150B2D] group-hover:scale-105 transition-transform flex items-center justify-center shadow-[0_4px_12px_rgba(112,71,235,0.25)] p-1 shrink-0">
+              <TalapLogo size={32} />
             </div>
-            <p className="text-[11px] text-[#667085] font-semibold leading-none mt-0.5">
-              Платформа задач бизнеса
-            </p>
+            <div>
+              <div className="flex items-center gap-1.5">
+                <span className="font-extrabold text-lg tracking-tight text-[#17171C] group-hover:text-[#7047EB] transition-colors">
+                  TALAP
+                </span>
+                <span className="text-[10px] font-bold text-[#7047EB] bg-[#7047EB]/10 border border-[#7047EB]/20 px-1.5 py-0.5 rounded-md flex items-center gap-0.5">
+                  <Sparkles className="w-2.5 h-2.5 text-[#7047EB]" />
+                  <span>AI</span>
+                </span>
+              </div>
+              <p className="text-[11px] text-[#667085] font-semibold leading-none mt-0.5">
+                Платформа задач бизнеса
+              </p>
+            </div>
           </div>
-        </div>
 
         {/* Clear Role Switcher Segmented Control */}
         <div className="space-y-1.5">
@@ -427,5 +436,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
         )}
       </div>
     </aside>
+
+    <BrandKitModal isOpen={isBrandKitOpen} onClose={() => setIsBrandKitOpen(false)} />
+  </>
   );
 };

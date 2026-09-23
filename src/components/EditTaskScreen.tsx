@@ -1,10 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { Task, RatingBreakdown } from '../types';
 import { calculateTaskRating } from '../utils/ratingCalculator';
+import { talapApi } from '../api/talapApi';
+import { useAsyncAction } from '../utils/useAsyncAction';
 import { RatingPanel } from './RatingPanel';
 import { AccordionItem } from './ui/Accordion';
 import { ContextHelp } from './ui/ContextHelp';
 import { useToast } from './ui/Toast';
+import { Select } from './ui/Select';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   ArrowLeft,
@@ -13,7 +16,12 @@ import {
   Sparkles,
   Building2,
   HelpCircle,
-  FileCheck
+  FileCheck,
+  Loader2,
+  AlertTriangle,
+  RotateCcw,
+  Save,
+  Send
 } from 'lucide-react';
 
 interface EditTaskScreenProps {
@@ -36,7 +44,7 @@ export const EditTaskScreen: React.FC<EditTaskScreenProps> = ({
   const [previewRating, setPreviewRating] = useState<RatingBreakdown>(task.rating);
   const [scoreGained, setScoreGained] = useState<number | null>(null);
 
-  // Requirement 4: By default, filled sections are collapsed, only 1 section is open
+  // Accordion state
   const [activeSection, setActiveSection] = useState<string>('context');
 
   const toggleSection = (key: string) => {
@@ -58,6 +66,46 @@ export const EditTaskScreen: React.FC<EditTaskScreenProps> = ({
     const calculated = calculateTaskRating(updated);
     setPreviewRating(calculated);
   };
+
+  // Async action to save task changes to server
+  const saveTaskAction = useAsyncAction(
+    async (publishNow?: boolean) => {
+      const willPublish = publishNow !== undefined ? publishNow : isPublished;
+      const updatedFields = {
+        ...formData,
+        published: willPublish,
+      };
+      const calculated = calculateTaskRating(updatedFields);
+      return talapApi.updateTask(task.id, {
+        ...updatedFields,
+        rating: calculated,
+      });
+    },
+    {
+      onSuccess: (updatedTask) => {
+        const oldScore = task.rating?.totalScore || 0;
+        const newScore = updatedTask.rating?.totalScore || 0;
+        const diff = Math.max(0, newScore - oldScore);
+
+        setIsPublished(updatedTask.published);
+        onSaveTask(updatedTask);
+        setHasUnsavedChanges(false);
+        setPreviewRating(updatedTask.rating);
+
+        if (updatedTask.published && !task.published) {
+          showToast('Задача успешно опубликована в каталоге!', 'success');
+        } else if (diff > 0) {
+          setScoreGained(diff);
+          showToast(`Карточка сохранена на сервере! +${diff} баллов к рейтингу`, 'success');
+        } else {
+          showToast('Изменения успешно сохранены на сервере', 'success');
+        }
+      },
+      onError: (errMsg) => {
+        showToast(`Ошибка сохранения: ${errMsg}`, 'error');
+      },
+    }
+  );
 
   const handleApplySuggestion = (sugId: string) => {
     const currentRating = calculateTaskRating(formData);
@@ -87,31 +135,11 @@ export const EditTaskScreen: React.FC<EditTaskScreenProps> = ({
   };
 
   const handleConfirmChanges = () => {
-    const calculated = calculateTaskRating(formData);
-    const oldScore = task.rating.totalScore;
-    const newScore = calculated.totalScore;
-    const diff = Math.max(0, newScore - oldScore);
-
-    const savedTask: Task = {
-      ...formData,
-      published: isPublished,
-      rating: calculated,
-      updatedAt: 'Только что',
-    };
-
-    onSaveTask(savedTask);
-    setHasUnsavedChanges(false);
-    setPreviewRating(calculated);
-
-    if (diff > 0) {
-      setScoreGained(diff);
-      showToast(`Карточка сохранена! Начислено +${diff} баллов к рейтингу`, 'success');
-    } else {
-      showToast('Изменения сохранены', 'success');
-    }
+    if (saveTaskAction.isLoading) return;
+    saveTaskAction.execute();
   };
 
-  // Section completion helpers & 1-line summaries (Requirement 4)
+  // Section completion helpers
   const isContextFilled = Boolean(formData.need?.trim() && formData.context?.trim());
   const isDataFilled = Boolean(formData.dataProvided?.trim() && formData.targetUsers?.trim());
   const isOutcomeFilled = Boolean(formData.expectedResult?.trim());
@@ -120,7 +148,7 @@ export const EditTaskScreen: React.FC<EditTaskScreenProps> = ({
 
   return (
     <div className="flex-1 flex flex-col p-8 overflow-y-auto space-y-6 max-w-7xl mx-auto w-full">
-      {/* 1. Header Zone: Single H1 and 1-line subtitle (Requirement 2 & 17) */}
+      {/* 1. Header Zone */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div className="space-y-1">
           <div className="flex items-center gap-2">
@@ -155,32 +183,106 @@ export const EditTaskScreen: React.FC<EditTaskScreenProps> = ({
             <span>Студенческий вид</span>
           </button>
 
+          {!isPublished && (
+            <button
+              type="button"
+              onClick={() => saveTaskAction.execute(true)}
+              disabled={saveTaskAction.isLoading}
+              className="h-10 px-4 bg-[#2CC7B5] hover:bg-[#20AE9D] disabled:opacity-60 disabled:cursor-not-allowed text-white text-xs font-bold rounded-xl transition-all flex items-center gap-1.5 cursor-pointer shadow-xs"
+            >
+              {saveTaskAction.isLoading ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin text-white" />
+                  <span>Публикуем…</span>
+                </>
+              ) : (
+                <>
+                  <Send className="w-3.5 h-3.5" />
+                  <span>Опубликовать в каталоге</span>
+                </>
+              )}
+            </button>
+          )}
+
           <button
             type="button"
             onClick={handleConfirmChanges}
-            disabled={!hasUnsavedChanges}
+            disabled={!hasUnsavedChanges || saveTaskAction.isLoading}
             className={`h-10 px-5 text-xs font-bold rounded-xl transition-all flex items-center gap-2 cursor-pointer ${
-              hasUnsavedChanges
+              hasUnsavedChanges && !saveTaskAction.isLoading
                 ? 'bg-[#7047EB] hover:bg-[#5E32DF] text-white shadow-xs'
                 : 'bg-[#F4F5F9] text-[#98A2B3] cursor-not-allowed border border-[#E2E5EE]'
             }`}
           >
-            <Check className="w-4 h-4 stroke-[2.5]" />
-            <span>{hasUnsavedChanges ? 'Сохранить изменения' : 'Сохранено'}</span>
+            {saveTaskAction.isLoading ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin text-white" />
+                <span>Сохраняем…</span>
+              </>
+            ) : (
+              <>
+                <Check className="w-4 h-4 stroke-[2.5]" />
+                <span>{hasUnsavedChanges ? 'Сохранить изменения' : 'Сохранено'}</span>
+              </>
+            )}
           </button>
         </div>
       </div>
 
-      {/* 2. 12-Column Grid Layout: 7 cols main, 5 cols rating panel, 24px gap (Requirement 3) */}
+      {/* Error Banner */}
+      {saveTaskAction.isError && (
+        <div className="p-4 bg-[#FFF0F0] border border-[#FF6266]/30 rounded-2xl flex items-center justify-between gap-3 text-xs text-[#DC2626]">
+          <div className="flex items-center gap-2 font-semibold">
+            <AlertTriangle className="w-4 h-4 shrink-0" />
+            <span>{saveTaskAction.error || 'Ошибка сохранения на сервере.'}</span>
+          </div>
+          <button
+            type="button"
+            onClick={saveTaskAction.retry}
+            className="px-3 py-1.5 bg-[#FF6266] text-white font-bold rounded-lg hover:bg-[#E5484D] transition-colors cursor-pointer shrink-0 flex items-center gap-1.5"
+          >
+            <RotateCcw className="w-3.5 h-3.5" />
+            <span>Повторить</span>
+          </button>
+        </div>
+      )}
+
+      {/* 2. 12-Column Grid Layout */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
         {/* Left Column (7 cols): Task Form with Accordion Sections */}
         <div className="lg:col-span-7 space-y-4">
           {/* Main Title & Theme Card */}
           <div className="bg-white rounded-2xl border border-[#E2E5EE] p-5 shadow-xs space-y-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <div className="w-9 h-9 rounded-xl bg-[#F0ECFF] text-[#7047EB] flex items-center justify-center font-bold">
+                  <Building2 className="w-4 h-4" />
+                </div>
+                <div>
+                  <div className="text-xs font-black text-[#17171C]">
+                    {formData.company.name}
+                  </div>
+                  <div className="text-[11px] text-[#667085]">
+                    {formData.company.industry}
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <span className={`px-2.5 py-0.5 rounded-md text-[11px] font-bold ${
+                  formData.published 
+                    ? 'bg-[#E8FAF7] text-[#149A8B] border border-[#2CC7B5]/30'
+                    : 'bg-[#FFF8E7] text-[#92400E] border border-[#FFC44D]/40'
+                }`}>
+                  {formData.published ? 'Опубликована в каталоге' : 'Черновик'}
+                </span>
+              </div>
+            </div>
+
             <div className="grid grid-cols-1 sm:grid-cols-12 gap-4">
               <div className="sm:col-span-8 space-y-1">
                 <label className="text-xs font-bold text-[#17171C]">
-                  Название задачи
+                  Заголовок практической задачи
                 </label>
                 <input
                   type="text"
@@ -195,18 +297,19 @@ export const EditTaskScreen: React.FC<EditTaskScreenProps> = ({
                 <label className="text-xs font-bold text-[#17171C]">
                   Отрасль / Направление
                 </label>
-                <select
+                <Select
                   value={formData.theme}
-                  onChange={(e) => handleFieldChange('theme', e.target.value)}
-                  className="w-full h-11 px-3.5 rounded-xl border border-[#E2E5EE] bg-[#F8F9FC] text-xs font-bold text-[#17171C] focus:bg-white focus:outline-none focus:border-[#7047EB] transition-all cursor-pointer"
-                >
-                  <option value="AI / ML">AI / ML</option>
-                  <option value="FinTech">FinTech</option>
-                  <option value="LogTech">LogTech</option>
-                  <option value="GovTech">GovTech</option>
-                  <option value="HealthTech">HealthTech</option>
-                  <option value="E-commerce">E-commerce</option>
-                </select>
+                  onChange={(val) => handleFieldChange('theme', val)}
+                  options={[
+                    { value: 'AI / ML', label: 'AI / ML' },
+                    { value: 'FinTech', label: 'FinTech' },
+                    { value: 'LogTech', label: 'LogTech' },
+                    { value: 'GovTech', label: 'GovTech' },
+                    { value: 'HealthTech', label: 'HealthTech' },
+                    { value: 'E-commerce', label: 'E-commerce' },
+                  ]}
+                  triggerClassName="h-11 rounded-xl bg-[#F8F9FC] border-[#E2E5EE] text-xs font-bold"
+                />
               </div>
             </div>
           </div>
@@ -227,43 +330,46 @@ export const EditTaskScreen: React.FC<EditTaskScreenProps> = ({
               <div className="space-y-1.5">
                 <div className="flex items-center justify-between">
                   <label className="text-xs font-bold text-[#17171C]">
-                    Потребность бизнеса (простыми словами)
+                    Потребность бизнеса (что должно измениться)
                   </label>
-                  <ContextHelp topic="readiness" />
+                  <ContextHelp topic="need" />
                 </div>
                 <textarea
                   rows={3}
                   value={formData.need}
                   onChange={(e) => handleFieldChange('need', e.target.value)}
-                  placeholder="Опишите, с какой трудностью сталкивается компания сейчас..."
+                  placeholder="Опишите, чего вы хотите достичь..."
                   className="w-full p-3 rounded-xl border border-[#E2E5EE] bg-[#F8F9FC] text-xs font-medium text-[#17171C] focus:bg-white focus:outline-none focus:border-[#7047EB] transition-all"
                 />
               </div>
 
               <div className="space-y-1.5">
-                <label className="text-xs font-bold text-[#17171C]">
-                  Контекст задачи
-                </label>
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-bold text-[#17171C]">
+                    Текущий контекст и предпосылки
+                  </label>
+                  <ContextHelp topic="context" />
+                </div>
                 <textarea
                   rows={3}
                   value={formData.context}
                   onChange={(e) => handleFieldChange('context', e.target.value)}
-                  placeholder="Опишите текущий рабочий процесс и используемые инструменты..."
+                  placeholder="Как процесс устроен сейчас и почему возникла задача..."
                   className="w-full p-3 rounded-xl border border-[#E2E5EE] bg-[#F8F9FC] text-xs font-medium text-[#17171C] focus:bg-white focus:outline-none focus:border-[#7047EB] transition-all"
                 />
               </div>
             </div>
           </AccordionItem>
 
-          {/* Accordion 2: Предоставляемые данные и целевая аудитория */}
+          {/* Accordion 2: Данные и целевые пользователи */}
           <AccordionItem
             stepNumber={2}
-            title="Предоставляемые данные и аудитория"
-            subtitle="Что получит команда для старта"
+            title="Данные и пользователи"
+            subtitle="Что получит команда и кто конечные пользователи"
             summary={formData.dataProvided ? formData.dataProvided.slice(0, 80) + '...' : undefined}
             isFilled={isDataFilled}
-            badgeText={isDataFilled ? 'Заполнено · 25 баллов' : 'Требует данных'}
-            scoreBonus="+25 б."
+            badgeText={isDataFilled ? 'Заполнено · 20 баллов' : 'Требует данных'}
+            scoreBonus="+20 б."
             isOpen={activeSection === 'data'}
             onToggle={() => toggleSection('data')}
           >
@@ -271,7 +377,7 @@ export const EditTaskScreen: React.FC<EditTaskScreenProps> = ({
               <div className="space-y-1.5">
                 <div className="flex items-center justify-between">
                   <label className="text-xs font-bold text-[#17171C]">
-                    Данные, которые предоставляет компания
+                    Предоставляемые данные и файлы
                   </label>
                   <ContextHelp topic="data" />
                 </div>
@@ -279,31 +385,34 @@ export const EditTaskScreen: React.FC<EditTaskScreenProps> = ({
                   rows={3}
                   value={formData.dataProvided}
                   onChange={(e) => handleFieldChange('dataProvided', e.target.value)}
-                  placeholder="Опишите датасеты, API, дампы, схему базы или тестовые выгрузки..."
+                  placeholder="Формат, объём, структура датасета или тестового API..."
                   className="w-full p-3 rounded-xl border border-[#E2E5EE] bg-[#F8F9FC] text-xs font-medium text-[#17171C] focus:bg-white focus:outline-none focus:border-[#7047EB] transition-all"
                 />
               </div>
 
               <div className="space-y-1.5">
-                <label className="text-xs font-bold text-[#17171C]">
-                  Целевая аудитория и конечные пользователи
-                </label>
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-bold text-[#17171C]">
+                    Целевые пользователи решения
+                  </label>
+                  <ContextHelp topic="users" />
+                </div>
                 <input
                   type="text"
                   value={formData.targetUsers}
                   onChange={(e) => handleFieldChange('targetUsers', e.target.value)}
-                  placeholder="Например: Модераторы контента, покупатели на сайте..."
+                  placeholder="Например: Операторы колл-центра, аналитики, клиенты..."
                   className="w-full h-11 px-3.5 rounded-xl border border-[#E2E5EE] bg-[#F8F9FC] text-xs font-medium text-[#17171C] focus:bg-white focus:outline-none focus:border-[#7047EB] transition-all"
                 />
               </div>
             </div>
           </AccordionItem>
 
-          {/* Accordion 3: Ожидаемый результат решения */}
+          {/* Accordion 3: Ожидаемый результат */}
           <AccordionItem
             stepNumber={3}
-            title="Ожидаемый результат решения"
-            subtitle="Что именно должна сдать студенческая команда"
+            title="Ожидаемый результат"
+            subtitle="Какой формат сдачи ожидает бизнес от студентов"
             summary={formData.expectedResult ? formData.expectedResult.slice(0, 80) + '...' : undefined}
             isFilled={isOutcomeFilled}
             badgeText={isOutcomeFilled ? 'Заполнено · 20 баллов' : 'Требует данных'}
@@ -311,38 +420,38 @@ export const EditTaskScreen: React.FC<EditTaskScreenProps> = ({
             isOpen={activeSection === 'outcome'}
             onToggle={() => toggleSection('outcome')}
           >
-            <div className="space-y-4 pt-3">
+            <div className="space-y-3 pt-3">
               <div className="space-y-1.5">
                 <div className="flex items-center justify-between">
                   <label className="text-xs font-bold text-[#17171C]">
-                    Ожидаемый артефакт (результат спринта)
+                    Артефакты и формат сдачи
                   </label>
-                  <ContextHelp topic="criteria" />
+                  <ContextHelp topic="expected" />
                 </div>
                 <textarea
-                  rows={3}
+                  rows={4}
                   value={formData.expectedResult}
                   onChange={(e) => handleFieldChange('expectedResult', e.target.value)}
-                  placeholder="Микросервис в Docker, веб-дэшборд, ML-пайплайн с валидацией..."
+                  placeholder="Например: 1. GitHub репозиторий с FastAPI. 2. Dockerfile. 3. Демо-интерфейс..."
                   className="w-full p-3 rounded-xl border border-[#E2E5EE] bg-[#F8F9FC] text-xs font-medium text-[#17171C] focus:bg-white focus:outline-none focus:border-[#7047EB] transition-all"
                 />
               </div>
             </div>
           </AccordionItem>
 
-          {/* Accordion 4: Критерии успеха и метрики */}
+          {/* Accordion 4: Критерии успеха */}
           <AccordionItem
             stepNumber={4}
-            title="Критерии успеха и метрики"
-            subtitle="Как бизнес поймёт, что задача решена качественно"
+            title="Критерии успеха решения"
+            subtitle="Измеримые метрики качества и приёмки"
             summary={formData.successCriteria ? formData.successCriteria.slice(0, 80) + '...' : undefined}
             isFilled={isSuccessFilled}
-            badgeText={isSuccessFilled ? 'Заполнено · 15 баллов' : 'Требует данных'}
-            scoreBonus="+15 б."
+            badgeText={isSuccessFilled ? 'Заполнено · 20 баллов' : 'Требует данных'}
+            scoreBonus="+20 б."
             isOpen={activeSection === 'success'}
             onToggle={() => toggleSection('success')}
           >
-            <div className="space-y-4 pt-3">
+            <div className="space-y-3 pt-3">
               <div className="space-y-1.5">
                 <div className="flex items-center justify-between">
                   <label className="text-xs font-bold text-[#17171C]">
@@ -418,7 +527,7 @@ export const EditTaskScreen: React.FC<EditTaskScreenProps> = ({
           </AccordionItem>
         </div>
 
-        {/* Right Column (5 cols): Rating Panel (Requirement 3 & 4) */}
+        {/* Right Column (5 cols): Rating Panel */}
         <div className="lg:col-span-5 sticky top-6">
           <RatingPanel
             rating={previewRating}
@@ -427,6 +536,7 @@ export const EditTaskScreen: React.FC<EditTaskScreenProps> = ({
             onOpenMissionField={handleOpenMissionField}
             onConfirmChanges={handleConfirmChanges}
             scoreGained={scoreGained}
+            isTestMode={true}
           />
         </div>
       </div>
