@@ -1,21 +1,23 @@
 FIELD_WEIGHTS = {
-    "context_need": 20,
-    "data_materials": 20,
+    "context": 10,
+    "need": 10,
+    "data_description": 20,
     "expected_result": 15,
     "success_criteria": 15,
-    "constraints": 10,
+    "deadline": 10,
     "target_users": 10,
-    "business_contact": 10,
+    "interaction_format": 10,
 }
 
 FIELD_NAMES_RU = {
-    "context_need": "Контекст и потребность",
-    "data_materials": "Данные и материалы",
+    "context": "Контекст",
+    "need": "Потребность",
+    "data_description": "Данные и материалы",
     "expected_result": "Ожидаемый результат",
     "success_criteria": "Критерии успеха",
-    "constraints": "Ограничения",
+    "deadline": "Ограничения и сроки",
     "target_users": "Пользователи",
-    "business_contact": "Связь с бизнесом",
+    "interaction_format": "Формат взаимодействия",
 }
 
 
@@ -37,16 +39,16 @@ def calculate_task_rating(task_data: dict) -> dict:
             )
 
     if score >= 90:
-        status = "Приоритетная"
+        readiness_level = "Приоритетная"
     elif score >= 70:
-        status = "Готовая"
+        readiness_level = "Готовая"
     elif score >= 40:
-        status = "Рабочая"
+        readiness_level = "Рабочая"
     else:
-        status = "Черновик"
+        readiness_level = "Черновик"
 
     return {
         "score": score,
-        "status": status,
+        "readiness_level": readiness_level,
         "missing_fields": missing_fields,
     }
